@@ -21,6 +21,9 @@ app.use((req, res, next) => {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
+// Healthcheck — Replit requires GET / to return 200
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'Gyasi AI Coach' }));
+
 // ElevenLabs custom LLM endpoint
 const elevenLabsRouter = require('./routes/elevenlabs');
 app.use('/llm', elevenLabsRouter);
