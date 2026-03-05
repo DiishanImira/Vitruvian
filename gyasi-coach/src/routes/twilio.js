@@ -38,7 +38,8 @@ router.post('/voice', (req, res) => {
   }
 
   // TwiML to bridge Twilio call → ElevenLabs Conversational AI
-  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
+  const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}&xi-api-key=${elevenLabsKey}`;
 
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
