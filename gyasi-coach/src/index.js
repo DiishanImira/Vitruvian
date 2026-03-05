@@ -68,9 +68,9 @@ app.use((err, req, res, _next) => {
 
 // ── Start ───────────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
   console.log('  ║       Gyasi AI Coach — Phase 1       ║');
