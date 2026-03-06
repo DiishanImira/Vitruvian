@@ -20,36 +20,55 @@ const {
  *
  * The agent_id must be set in ELEVENLABS_AGENT_ID env var.
  */
-router.post('/voice', (req, res) => {
+router.post('/voice', async (req, res) => {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
+  const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
   const callerNumber = req.body.From || 'unknown';
 
   console.log(`[twilio/voice] Incoming call from ${callerNumber}`);
 
   if (!agentId) {
     console.error('[twilio/voice] ELEVENLABS_AGENT_ID not set!');
-    // Fallback TwiML — reads a message if agent not configured
     res.type('text/xml');
     res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="man">Hey, this is Gyasi. I'm here. The system is still getting set up — please text me and I'll respond right away. Talk soon.</Say>
+  <Say>Hey, this is Gyasi. The system is still getting set up — please text me and I'll respond right away.</Say>
 </Response>`);
     return;
   }
 
-  // TwiML to bridge Twilio call → ElevenLabs Conversational AI
-  const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
-  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}&amp;xi-api-key=${elevenLabsKey}`;
+  try {
+    // Get a signed WebSocket URL from ElevenLabs (avoids embedding API key in TwiML)
+    const sigResponse = await fetch(
+      `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
+      { headers: { 'xi-api-key': elevenLabsKey } }
+    );
+    const sigData = await sigResponse.json();
 
-  res.type('text/xml');
-  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+    if (!sigData.signed_url) {
+      throw new Error(`No signed_url in response: ${JSON.stringify(sigData)}`);
+    }
+
+    // ElevenLabs returns a wss://...conversation?... URL — swap path to /twilio for Twilio streams
+    const streamUrl = sigData.signed_url.replace('/convai/conversation?', '/convai/twilio?');
+
+    console.log(`[twilio/voice] Using signed stream URL for agent: ${agentId}`);
+
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="${streamUrl}" />
   </Connect>
 </Response>`);
-
-  console.log(`[twilio/voice] Connected to ElevenLabs agent: ${agentId}`);
+  } catch (err) {
+    console.error('[twilio/voice] Failed to get signed URL:', err.message);
+    res.type('text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Hey, this is Gyasi. I'm having a technical issue right now — please text me instead and I'll respond right away.</Say>
+</Response>`);
+  }
 });
 
 /**
