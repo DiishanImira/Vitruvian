@@ -67,37 +67,20 @@ router.post('/voice', async (req, res) => {
     return;
   }
 
-  try {
-    // Get a signed WebSocket URL from ElevenLabs (avoids embedding API key in TwiML)
-    const sigData = await getSignedUrl(agentId, elevenLabsKey);
+  // Build WebSocket URL with API key auth (escaped for XML)
+  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
 
-    if (!sigData.signed_url) {
-      throw new Error(`No signed_url in response: ${JSON.stringify(sigData)}`);
-    }
+  console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId}`);
 
-    // ElevenLabs returns a wss://...conversation?... URL — swap path to /twilio for Twilio streams
-    const rawUrl = sigData.signed_url.replace('/convai/conversation?', '/convai/twilio?');
-
-    // Escape & as &amp; for valid XML embedding
-    const streamUrl = rawUrl.replace(/&/g, '&amp;');
-
-    console.log(`[twilio/voice] Using signed stream URL for agent: ${agentId}`);
-
-    res.type('text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+  res.type('text/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}" />
+    <Stream url="${streamUrl}">
+      <Parameter name="xi_api_key" value="${elevenLabsKey}" />
+    </Stream>
   </Connect>
 </Response>`);
-  } catch (err) {
-    console.error('[twilio/voice] Failed to get signed URL:', err.message);
-    res.type('text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Hey, this is Gyasi. I'm having a technical issue right now — please text me instead and I'll respond right away.</Say>
-</Response>`);
-  }
 });
 
 /**
