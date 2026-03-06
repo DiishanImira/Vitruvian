@@ -76,7 +76,10 @@ router.post('/voice', async (req, res) => {
     }
 
     // ElevenLabs returns a wss://...conversation?... URL — swap path to /twilio for Twilio streams
-    const streamUrl = sigData.signed_url.replace('/convai/conversation?', '/convai/twilio?');
+    const rawUrl = sigData.signed_url.replace('/convai/conversation?', '/convai/twilio?');
+
+    // Escape & as &amp; for valid XML embedding
+    const streamUrl = rawUrl.replace(/&/g, '&amp;');
 
     console.log(`[twilio/voice] Using signed stream URL for agent: ${agentId}`);
 
