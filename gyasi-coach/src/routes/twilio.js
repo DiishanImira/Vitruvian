@@ -2,6 +2,36 @@
 
 const express = require('express');
 const router = express.Router();
+const https = require('https');
+
+/**
+ * Fetch ElevenLabs signed WebSocket URL for an agent.
+ * Uses Node built-in https to avoid fetch compatibility issues.
+ */
+function getSignedUrl(agentId, apiKey) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.elevenlabs.io',
+      path: `/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
+      method: 'GET',
+      headers: { 'xi-api-key': apiKey },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          resolve(parsed);
+        } catch (e) {
+          reject(new Error(`Failed to parse ElevenLabs response: ${data}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 const { callClaude } = require('../services/claude');
 const { sendSMS } = require('../services/twilio');
 const { buildGyasiPrompt } = require('../prompts/gyasi');
@@ -39,11 +69,7 @@ router.post('/voice', async (req, res) => {
 
   try {
     // Get a signed WebSocket URL from ElevenLabs (avoids embedding API key in TwiML)
-    const sigResponse = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
-      { headers: { 'xi-api-key': elevenLabsKey } }
-    );
-    const sigData = await sigResponse.json();
+    const sigData = await getSignedUrl(agentId, elevenLabsKey);
 
     if (!sigData.signed_url) {
       throw new Error(`No signed_url in response: ${JSON.stringify(sigData)}`);
