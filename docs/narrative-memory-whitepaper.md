@@ -217,13 +217,13 @@ Each level builds on the one before. No architecture changes required — only t
 
 This architecture aligns with several emerging research directions, while making different implementation choices:
 
-**Amory (January 2026)** — An agentic working memory framework that binds conversational fragments into episodic narratives and consolidates them into coherent plots. Our approach is similar in concept (fragments → narrative) but uses a simpler mechanism (Claude rewrite) instead of a specialized memory framework.
+**Amory (January 2026)** — An agentic working memory framework published on arXiv ([arxiv.org/abs/2601.06282](https://arxiv.org/abs/2601.06282)) that binds conversational fragments into episodic narratives and consolidates them into coherent plots. Evaluated on the LOCOMO benchmark, Amory achieved performance comparable to full-context reasoning while reducing response time by 50%. Our approach is similar in concept (fragments → narrative) but uses a simpler mechanism (Claude rewrite) instead of a specialized memory framework.
 
-**Dreamweaver Protocol (March 2026)** — Enables AI to "dream" by rereading past conversations, identifying important takeaways, and weaving them into a consolidated narrative that becomes permanent memory. Our post-call rewrite process is functionally identical — the key difference is that Dreamweaver operates on a general conversational agent, while our system is purpose-built for coaching with domain-specific insight extraction.
+**Narrative Memory-based Intelligent Agents (2025-2026)** — A framework published in The Asian Bulletin of Big Data Management ([researchgate.net/publication/390152592](https://www.researchgate.net/publication/390152592_Narrative_Memory_based_Intelligent_Agents)) proposing that agents using story-based representation of past experiences outperform traditional approaches in tasks requiring long-term context retention and causal reasoning. While published in a smaller journal, the findings align with our core hypothesis: narrative outperforms structured data for relationship-dependent AI tasks.
 
-**Narrative Memory-based Intelligent Agents (January 2026, ResearchGate)** — A formal framework showing that agents using story-based representation of past experiences outperform traditional approaches in tasks requiring long-term context retention and causal reasoning. This validates our core hypothesis: narrative outperforms structured data for relationship-dependent AI tasks.
+**Google Memory Bank (July 2025)** — Google's on-demand long-term memory solution for AI agents, integrated with Google ADK. More structured and factual than narrative-based, but represents major industry investment in persistent agent memory.
 
-The primary difference between our approach and the research frontier is infrastructure complexity. Academic implementations typically use knowledge graphs, vector stores, and multi-component memory pipelines. We use Markdown files and a Claude API call. The outputs are comparable; the operational simplicity is not.
+The broader trend is clear: the research community is converging on narrative and episodic memory as superior to key-value or vector-only approaches for long-horizon agent tasks. The primary difference between our approach and the research frontier is infrastructure complexity. Academic implementations typically use knowledge graphs, vector stores, and multi-component memory pipelines. We use Markdown files and a Claude API call. The outputs are comparable; the operational simplicity is not.
 
 ---
 
