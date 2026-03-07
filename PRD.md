@@ -1,445 +1,592 @@
-# PRD: Voice Agent Platform — Multi-Agent with User Memory & Tool Calling
+# PRD: Vitruvian Man AI Coach — Narrative Memory Architecture
 
-**Version:** 1.0  
+**Version:** 2.0  
 **Date:** 2026-03-06  
 **Author:** DiiClaw + Diishan Imira  
-**Status:** Draft
+**Status:** Draft  
 
 ---
 
-## 1. Overview
+## 1. What We're Building
 
-A single Node.js server that powers multiple AI voice agents (ElevenLabs Conversational AI + Twilio), with shared infrastructure for:
+An AI coaching system for men recovering from porn addiction, powered by Gyasi Hantman's cloned voice. The system remembers every member across calls — not just facts, but their story: patterns, breakthroughs, struggles, and what to do next. Each call feels like talking to a coach who genuinely knows you.
 
-- **Per-user persistent memory** across calls
-- **Mid-call tool execution** (SMS, lookups, etc.)
-- **Multi-agent switching** via environment variable
+### The Core Insight
 
-### Agents
-
-| Agent | Product | Purpose | Voice | LLM |
-|-------|---------|---------|-------|-----|
-| **Gyasi** | Vitruvian Man | Porn addiction recovery coaching | Gyasi PVC clone (`ta5vPsZm54WOCYibe6OP`) | Claude 3.5 Sonnet |
-| **Evan** | Mayvenn | New ambassador onboarding | Young Jamal (`6OzrBCQf8cjERkYgzSg8`) | GPT-5.2 |
+Traditional AI voice agents are stateless — every call starts from zero. Real coaching depends on continuity. A therapist's value isn't what they say in one session; it's the compounding understanding they build over months. This system gives an AI that same compounding memory.
 
 ---
 
-## 2. Problem Statement
+## 2. Architecture
 
-### Gyasi (Vitruvian)
-Members call in for coaching. Today, every call is stateless — the agent doesn't know who's calling, what they discussed last time, where they are in the program, or what they're struggling with. A real coach remembers. This agent needs to as well.
-
-### Mayvenn
-New ambassadors get an outbound call. The agent needs their name, signup data, and ambassador links injected per call. After the call, outcomes need to be logged and follow-ups scheduled.
-
-### Shared
-Both agents need mid-call actions (send SMS, look up user data) and post-call logging. Building this twice is wasteful.
-
----
-
-## 3. Architecture
-
-### 3.1 System Diagram
+### 2.1 Three-Layer Memory
 
 ```
-                         ┌─────────────────┐
-                         │   ElevenLabs    │
-                         │  Conversational  │
-                         │       AI         │
-                         └────┬───────┬────┘
-                              │       │
-                   Tool calls │       │ Post-call webhook
-                              ▼       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    VOICE AGENT SERVER                         │
-│                    (Node.js / Express)                        │
-│                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐  │
-│  │ Agent Router  │  │  Tool Engine │  │  Memory Service   │  │
-│  │              │  │              │  │                   │  │
-│  │ AGENT_MODE   │  │ • send_sms   │  │ • get_context     │  │
-│  │ = vitruvian  │  │ • get_member │  │ • save_summary    │  │
-│  │ | mayvenn    │  │ • log_mood   │  │ • get_history     │  │
-│  │              │  │ • save_note  │  │ • update_progress │  │
-│  └──────────────┘  └──────┬───────┘  └─────────┬─────────┘  │
-│                           │                     │            │
-│                    ┌──────┴─────────────────────┴──────┐     │
-│                    │           Database                 │     │
-│                    │         (PostgreSQL)               │     │
-│                    │                                    │     │
-│                    │  users / calls / memory / tools    │     │
-│                    └───────────────────────────────────┘     │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │                   Twilio                              │    │
-│  │  • SMS delivery    • Call status    • Phone numbers   │    │
-│  └──────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ LAYER 1: Member Index (members.json)             │
+│                                                  │
+│ Phone → name, tier, signup, call count, status   │
+│ Purpose: "Who is this person?" (instant lookup)  │
+└──────────────────────────┬───────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────┐
+│ LAYER 2: Member Story (stories/+1XXXXXXXXXX.md)  │
+│                                                  │
+│ YAML frontmatter (structured tags for future     │
+│ VDB ingestion) + synthesized narrative:           │
+│ patterns, breakthroughs, struggles, emotional    │
+│ arc, coaching guidance for next call              │
+│                                                  │
+│ Purpose: "What does Gyasi need to know to        │
+│ coach this person right now?"                    │
+└──────────────────────────┬───────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────┐
+│ LAYER 3: Call Archive (calls/*.json)             │
+│                                                  │
+│ Raw transcript + AI-generated summary per call   │
+│ Chronological record — the "Timeline_README"     │
+│ of each member's journey                         │
+│                                                  │
+│ Purpose: Source material for story rewrites +    │
+│ future cross-user analysis                       │
+└──────────────────────────────────────────────────┘
 ```
 
-### 3.2 Agent Switching
-
-```bash
-# .env
-AGENT_MODE=vitruvian   # or "mayvenn"
-```
-
-The server loads agent-specific config (prompt, tools, ElevenLabs agent ID, voice) based on this variable. Shared infrastructure (database, SMS, memory) is agent-agnostic.
+### 2.2 System Diagram
 
 ```
-config/
-├── agents/
-│   ├── vitruvian.js    # Gyasi agent config (IDs, voice, prompt, tools)
-│   └── mayvenn.js      # Evan agent config (IDs, voice, prompt, tools)
-└── shared.js           # DB, Twilio, common settings
+                    ┌──────────────────────┐
+                    │     ElevenLabs       │
+                    │  Conversational AI   │
+                    │                      │
+                    │  Voice: Gyasi PVC    │
+                    │  LLM: Claude 3.5     │
+                    │  KB: Full curriculum  │
+                    └───┬──────────┬───────┘
+                        │          │
+             Tool calls │          │ Post-call webhook
+                        ▼          ▼
+┌──────────────────────────────────────────────────┐
+│              VITRUVIAN SERVER                      │
+│              (Node.js / Express)                   │
+│                                                    │
+│  ┌─────────────┐  ┌──────────────────────────┐    │
+│  │ Tool Engine  │  │   Post-Call Pipeline     │    │
+│  │              │  │                          │    │
+│  │ get_context  │  │ 1. Save transcript       │    │
+│  │ save_note    │  │ 2. Generate summary      │    │
+│  │ log_mood     │  │ 3. Rewrite Member Story  │    │
+│  │ send_sms     │  │ 4. Update index          │    │
+│  │ update_prog  │  │                          │    │
+│  └──────┬───────┘  └────────────┬─────────────┘   │
+│         │                       │                  │
+│  ┌──────▼───────────────────────▼──────────────┐   │
+│  │              DATA LAYER                      │   │
+│  │                                              │   │
+│  │  members.json     stories/*.md    calls/*.json│  │
+│  │  (phone book)     (narratives)    (archive)  │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                    │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Twilio (SMS delivery) + Claude (summaries)  │   │
+│  └──────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────┘
 ```
 
----
-
-## 4. User Memory Architecture
-
-### 4.1 Core Concept
-
-Every caller gets a persistent profile tied to their phone number. The AI agent fetches this at the start of every call via a **server tool** (`get_member_context`), so it knows who it's talking to before saying a word.
-
-### 4.2 Data Model
-
-```sql
--- Users table: core identity
-CREATE TABLE users (
-  id            SERIAL PRIMARY KEY,
-  phone         VARCHAR(20) UNIQUE NOT NULL,
-  name          VARCHAR(100),
-  email         VARCHAR(200),
-  agent_mode    VARCHAR(20) NOT NULL,           -- 'vitruvian' or 'mayvenn'
-  created_at    TIMESTAMP DEFAULT NOW(),
-  updated_at    TIMESTAMP DEFAULT NOW(),
-  metadata      JSONB DEFAULT '{}'              -- agent-specific fields
-);
-
--- Call log: every conversation
-CREATE TABLE calls (
-  id                SERIAL PRIMARY KEY,
-  user_id           INTEGER REFERENCES users(id),
-  conversation_id   VARCHAR(100),                -- ElevenLabs conversation ID
-  agent_mode        VARCHAR(20) NOT NULL,
-  started_at        TIMESTAMP DEFAULT NOW(),
-  duration_secs     INTEGER,
-  transcript        TEXT,
-  outcome           VARCHAR(50),                 -- completed, dropped, voicemail, etc.
-  summary           TEXT,                         -- AI-generated call summary
-  metadata          JSONB DEFAULT '{}'
-);
-
--- Memory: persistent per-user context
-CREATE TABLE memory (
-  id            SERIAL PRIMARY KEY,
-  user_id       INTEGER REFERENCES users(id),
-  key           VARCHAR(100) NOT NULL,           -- e.g. 'current_module', 'mood_trend'
-  value         TEXT NOT NULL,
-  agent_mode    VARCHAR(20) NOT NULL,
-  created_at    TIMESTAMP DEFAULT NOW(),
-  updated_at    TIMESTAMP DEFAULT NOW(),
-  UNIQUE(user_id, key, agent_mode)
-);
-
--- Tool log: every mid-call tool execution
-CREATE TABLE tool_logs (
-  id              SERIAL PRIMARY KEY,
-  call_id         INTEGER REFERENCES calls(id),
-  tool_name       VARCHAR(50),
-  input_params    JSONB,
-  output_result   JSONB,
-  executed_at     TIMESTAMP DEFAULT NOW()
-);
-```
-
-### 4.3 Memory Keys by Agent
-
-**Vitruvian (Gyasi):**
-| Key | Example Value | Purpose |
-|-----|---------------|---------|
-| `current_module` | `"3"` | Where they are in the course |
-| `days_clean` | `"14"` | Self-reported streak |
-| `key_triggers` | `"stress at work, late nights alone"` | Known relapse triggers |
-| `breakthroughs` | `"realized porn is a coping mechanism, not a need"` | Moments of clarity |
-| `struggles` | `"wife found out, trust is broken"` | Active pain points |
-| `coaching_notes` | `"responds well to direct challenges, don't coddle"` | How to approach them |
-| `last_mood` | `"frustrated but determined"` | Emotional state last call |
-| `commitment` | `"no porn for 30 days, check in weekly"` | What they committed to |
-
-**Mayvenn (Evan):**
-| Key | Example Value | Purpose |
-|-----|---------------|---------|
-| `ambassador_link` | `"shop.mayvenn.com/keisha"` | Their unique link |
-| `autopilot_link` | `"autopilot.mayvenn.com/setup/keisha"` | Setup URL |
-| `autopilot_status` | `"not_activated"` | Current activation status |
-| `signup_date` | `"2026-03-05"` | When they joined |
-| `client_count` | `"15"` | Number of weave/extension clients |
-| `instagram_active` | `"no"` | Whether they use IG |
-| `commitment` | `"tonight"` | When they said they'd activate |
-| `follow_up_reason` | `"wanted to talk to husband first"` | Why they didn't commit |
-
-### 4.4 Memory Flow (per call)
+### 2.3 File Structure
 
 ```
-Call starts
-  ↓
-Agent triggers: get_member_context(phone)
-  ↓
-Server: lookup phone → return user profile + memory + last call summary
-  ↓
-Agent: adapts conversation using context
-  ↓
-Mid-call: Agent triggers tools (send_sms, save_note, log_mood, etc.)
-  ↓
-Call ends
-  ↓
-Post-call webhook fires
-  ↓
-Server: save transcript, generate summary, update memory keys
+data/
+├── members.json                        # Index: phone → profile
+├── stories/
+│   ├── +13055551234.md                 # Marcus's narrative
+│   ├── +17865559876.md                 # James's narrative
+│   └── ...
+├── calls/
+│   ├── +13055551234/
+│   │   ├── 2026-03-06_conv_abc123.json # Call 1: transcript + summary
+│   │   ├── 2026-03-09_conv_def456.json # Call 2: transcript + summary
+│   │   └── ...
+│   └── +17865559876/
+│       └── ...
+└── coaching-playbook.md                # System-level insights (future: from VDB analysis)
 ```
 
 ---
 
-## 5. Server Tools (ElevenLabs → Our Server)
+## 3. Data Formats
 
-### 5.1 Shared Tools (both agents)
+### 3.1 Member Index (`members.json`)
 
-| Tool | Trigger | Endpoint | Action |
-|------|---------|----------|--------|
-| `get_member_context` | Call start (automatic) | `POST /api/tools/get-context` | Returns user profile, memory, last call summary |
-| `send_sms` | User agrees to receive link/info | `POST /api/tools/send-sms` | Sends SMS via Twilio |
-| `save_note` | Agent wants to remember something | `POST /api/tools/save-note` | Stores a memory key for this user |
-
-### 5.2 Vitruvian-Only Tools
-
-| Tool | Trigger | Endpoint | Action |
-|------|---------|----------|--------|
-| `log_mood` | Agent assesses emotional state | `POST /api/tools/log-mood` | Saves mood + context to memory |
-| `update_progress` | User reports module completion or milestone | `POST /api/tools/update-progress` | Updates current_module, days_clean, etc. |
-| `get_course_content` | User asks about specific topic | `POST /api/tools/get-course` | Returns relevant curriculum section |
-
-### 5.3 Mayvenn-Only Tools
-
-| Tool | Trigger | Endpoint | Action |
-|------|---------|----------|--------|
-| `check_autopilot` | Agent wants to verify activation status | `POST /api/tools/check-autopilot` | Calls Mayvenn API to check status |
-| `schedule_followup` | User needs a callback | `POST /api/tools/schedule-followup` | Queues a follow-up call |
-
-### 5.4 Tool Request/Response Format
-
-```
-ElevenLabs → POST /api/tools/get-context
-Body: { "phone_number": "+13055551234" }
-
-Response: {
-  "name": "Keisha",
-  "call_count": 3,
-  "last_call": "2 days ago",
-  "last_call_summary": "Discussed Module 3. She's on day 14 clean. Still struggling with late-night triggers. Committed to journaling before bed.",
-  "memory": {
-    "current_module": "3",
-    "days_clean": "14",
-    "key_triggers": "late nights alone, stress at work",
-    "last_mood": "determined"
+```json
+{
+  "+13055551234": {
+    "name": "Marcus",
+    "email": "marcus@gmail.com",
+    "tier": "foundation",
+    "signup": "2026-03-01",
+    "calls": 4,
+    "lastCall": "2026-03-18",
+    "lastOutcome": "relapsed_reframe",
+    "daysSober": 0,
+    "currentModule": 1,
+    "storyFile": "stories/+13055551234.md"
   }
+}
+```
+
+### 3.2 Member Story (`stories/+13055551234.md`)
+
+```markdown
+---
+phone: "+13055551234"
+name: Marcus
+tier: foundation
+signup: 2026-03-01
+calls: 4
+last_call: 2026-03-18
+days_clean: 0
+current_module: 1
+status: active
+tags: [late-night-trigger, work-stress, shame-spiral, wife-discovered, relapse-after-streak, emotional-void, physical-movement-works]
+---
+
+# Marcus — The Story So Far
+
+Marcus is 37, married, two kids. Wife found his browser history in January —
+that's what brought him here. The shame is the dominant emotion, not the
+addiction itself.
+
+## Where He Is
+Day 0 — just relapsed after an 18-day streak (his longest). He's in the
+self-punishment phase.
+
+## Patterns
+- **Late-night vulnerability**: 3 of 4 calls after 10pm. Nighttime is when
+  urges surface. No nighttime routine built yet.
+- **Stress → isolation → urge cycle**: Work stress in calls 2, 3, and 4.
+  He isolates when stressed (stays up after wife sleeps), creating the window.
+- **Emotional void, not just sexual**: Call 3 — "empty, not horny." Starting
+  to see porn as a coping mechanism. Module 3 insight arriving organically.
+- **Physical movement works**: Walk on Day 10 was his only successful
+  intervention. Hasn't repeated it.
+
+## What's Working
+- He keeps calling. 4 calls in 18 days — engaged.
+- Honest. No minimizing, no performing recovery.
+- "Empty not horny" was unprompted — real self-examination happening.
+
+## What's Not
+- No nighttime routine despite clear trigger window.
+- Module 1 only — no course progression in 18 days.
+- Walk worked once but not built into pattern.
+- Post-relapse shame spiral could become a quit trigger.
+
+## Next Call Guidance
+Lead with normalizing the relapse. Do NOT let him sit in shame — that
+feeds the cycle. Push the "Compounding Machine" frame: the relapse didn't
+erase 18 days of neural rewiring. Probe the nighttime routine gap. Suggest
+the walk as a deliberate pre-bed ritual, not just emergency intervention.
+If receptive, introduce Module 3 concepts (Depletive vs Accretive Inputs) —
+he's already arriving at those ideas on his own.
+```
+
+### 3.3 Call Archive (`calls/+13055551234/2026-03-18_conv_xyz789.json`)
+
+```json
+{
+  "conversation_id": "conv_xyz789",
+  "phone": "+13055551234",
+  "date": "2026-03-18",
+  "started_at": "2026-03-18T23:14:00Z",
+  "duration_secs": 487,
+  "outcome": "relapsed_reframe",
+  "transcript": "Gyasi: Hey Marcus, how are you doing tonight?\nMarcus: Not great man. I messed up...",
+  "summary": "Call 4. Marcus relapsed on Day 18 after his longest streak. Called at 11:14pm — late-night pattern continues. Trigger was work stress leading to isolation after wife went to sleep. Heavy shame. Talked through the shame spiral — reframed relapse as data, not failure. He acknowledged the 'empty not horny' feeling again. Didn't get to course content. Committed to calling back in 2 days.",
+  "mood": "defeated but still engaged",
+  "tools_used": []
 }
 ```
 
 ---
 
-## 6. Post-Call Processing
+## 4. Call Flow
 
-When a call ends, ElevenLabs fires a webhook to our server:
+### 4.1 Call Start — Context Loading
 
 ```
-POST /webhooks/conversation-end
+Phone rings → Twilio → ElevenLabs answers
+  ↓
+Agent triggers: get_member_context(phone)
+  ↓
+Server:
+  1. Look up phone in members.json
+  2. Read stories/+13055551234.md
+  3. Read last 2 call summaries from calls/+13055551234/
+  ↓
+Returns to agent:
+  {
+    "known_member": true,
+    "name": "Marcus",
+    "tier": "foundation",
+    "calls": 4,
+    "days_clean": 0,
+    "story": "[full .md content]",
+    "recent_calls": [
+      { "date": "2026-03-15", "summary": "Day 14. Called at 11pm..." },
+      { "date": "2026-03-18", "summary": "Day 18. Relapsed..." }
+    ]
+  }
+  ↓
+Agent: reads the story, understands Marcus, adapts the conversation
 ```
 
-### Processing pipeline:
-1. **Save raw transcript** to `calls` table
-2. **Generate call summary** — call Claude API with transcript, get a 2-3 sentence summary
-3. **Extract memory updates** — call Claude API: "Based on this conversation, what should we remember about this person? Return updated memory keys."
-4. **Update memory** — merge new memory keys into the `memory` table
-5. **Update call outcome** — mark as `completed`, `dropped`, `voicemail`, `callback_requested`, etc.
-6. **Trigger follow-ups** — if outcome requires it (missed call → retry, callback → schedule)
-
-### Summary Generation Prompt:
+For **new callers** (phone not in index):
 ```
-You are summarizing a coaching call for future reference. The coach needs to quickly remember:
-- What was discussed
-- How the person was feeling
-- Any commitments they made
-- What to follow up on next time
+Returns: { "known_member": false }
+Agent: runs first-call intake — name, what brought them here,
+       where they are in their journey
+```
 
-Keep it to 2-3 sentences. Be specific, not generic.
+### 4.2 Mid-Call — Tool Execution
+
+| Tool | When | What It Does |
+|------|------|--------------|
+| `get_member_context` | Call start | Returns profile + story + recent summaries |
+| `save_note` | Agent hears something important | Writes a note to a scratch file for post-call processing |
+| `log_mood` | Agent assesses emotional state | Records mood + context (used in story rewrite) |
+| `update_progress` | Member reports milestone | Updates days_clean, current_module in index |
+| `send_sms` | Member needs a resource | Sends course link, crisis hotline, journal prompt via Twilio |
+| `get_course_content` | Member asks about a topic | Returns relevant curriculum section from KB |
+
+### 4.3 Call End — Story Rewrite Pipeline
+
+```
+Call ends → ElevenLabs fires webhook
+  ↓
+1. SAVE — Write transcript + basic metadata to calls/+PHONE/DATE_CONVID.json
+  ↓
+2. SUMMARIZE — Send transcript to Claude:
+   "Summarize this coaching call in 3-4 sentences. Include: what was
+    discussed, emotional state, any commitments made, what to follow up on."
+   → Save summary to the call JSON
+  ↓
+3. REWRITE STORY — Send to Claude:
+   - Previous Member Story (.md)
+   - ALL call summaries for this member (chronological)
+   - Any mid-call notes (save_note, log_mood)
+   - Member profile from index
+   
+   Prompt:
+   "You are maintaining the narrative memory for a coaching client.
+    Rewrite their Member Story based on all available information.
+    
+    Include:
+    - Updated 'Where He Is' section reflecting current state
+    - Patterns: behaviors that keep showing up, trigger patterns,
+      what's consistent across calls
+    - What's Working: positive signals, engagement indicators
+    - What's Not: gaps, stalls, risks
+    - Next Call Guidance: specific coaching direction based on
+      everything above. Reference Vitruvian Man course concepts
+      where the member is ready for them.
+    
+    Update the YAML frontmatter tags to reflect current patterns.
+    
+    Write as narrative, not a report. Be specific, not generic.
+    This file is what the coach reads before the next call."
+   
+   → Overwrite stories/+PHONE.md with new version
+  ↓
+4. UPDATE INDEX — Update members.json: call count, lastCall, lastOutcome,
+   daysSober, currentModule
 ```
 
 ---
 
-## 7. Outbound Calling
+## 5. Server Tools (ElevenLabs → Server)
 
-### 7.1 Single Call
-```bash
-node scripts/make-call.js +13055551234 --name "Keisha" --link "shop.mayvenn.com/keisha"
+### 5.1 Tool Definitions
+
+```javascript
+// get_member_context — called at start of every call
+{
+  name: "get_member_context",
+  description: "Look up the caller's profile, their story (history, patterns, coaching notes), and recent call summaries. Call this at the very beginning of every conversation to understand who you're talking to.",
+  parameters: {
+    phone_number: {
+      type: "string",
+      description: "Caller's phone number. Use {{system__caller_id}}."
+    }
+  }
+}
+
+// save_note — mid-call memory capture
+{
+  name: "save_note",
+  description: "Save an important observation about the caller that should be remembered. Use when you notice a pattern, the caller reveals something significant, or makes a commitment.",
+  parameters: {
+    note: {
+      type: "string",
+      description: "What to remember. Be specific."
+    }
+  }
+}
+
+// log_mood — emotional state tracking
+{
+  name: "log_mood",
+  description: "Record the caller's current emotional state and what's driving it.",
+  parameters: {
+    mood: {
+      type: "string",
+      description: "Emotional state (e.g., 'defeated but engaged', 'angry at himself', 'cautiously hopeful')"
+    },
+    context: {
+      type: "string",
+      description: "What's driving this mood"
+    }
+  }
+}
+
+// update_progress — milestone tracking
+{
+  name: "update_progress",
+  description: "Update the caller's recovery progress when they report a milestone.",
+  parameters: {
+    days_clean: {
+      type: "number",
+      description: "Current self-reported days without porn. 0 if just relapsed."
+    },
+    current_module: {
+      type: "number",
+      description: "Module number they're currently working through (1-7)"
+    }
+  }
+}
+
+// send_sms — resource delivery
+{
+  name: "send_sms",
+  description: "Send a text message to the caller with a resource, link, or journal prompt.",
+  parameters: {
+    phone_number: {
+      type: "string",
+      description: "Phone number to text"
+    },
+    message: {
+      type: "string",
+      description: "Message content"
+    }
+  }
+}
+
+// get_course_content — curriculum retrieval
+{
+  name: "get_course_content",
+  description: "Retrieve a specific section of the Vitruvian Man course content. Use when the caller asks about or is ready for specific course concepts.",
+  parameters: {
+    topic: {
+      type: "string",
+      description: "Topic to look up (e.g., 'Compounding Machine', 'Depletive vs Accretive', 'Module 3 exercises')"
+    }
+  }
+}
 ```
 
-### 7.2 Batch Calls (CSV)
-```bash
-node scripts/batch-call.js leads.csv --delay 30 --dry-run
-```
+### 5.2 Tool Endpoints
 
-### 7.3 Scheduled Follow-ups
-Server checks `calls` table for follow-up triggers:
-- `callback_requested` with a scheduled time
-- `no_answer` → retry after 24h (max 3 attempts)
-- `autopilot_not_activated` → follow-up after 48h
+```
+POST /api/tools/get-context       → reads members.json + story + recent calls
+POST /api/tools/save-note         → appends to scratch file for post-call processing
+POST /api/tools/log-mood          → saves mood entry for post-call processing
+POST /api/tools/update-progress   → updates members.json immediately
+POST /api/tools/send-sms          → sends via Twilio
+POST /api/tools/get-course        → searches curriculum KB, returns relevant section
+POST /webhooks/conversation-end   → triggers the full post-call pipeline
+```
 
 ---
 
-## 8. Project Structure
+## 6. Project Structure
 
 ```
-Vitruvian/
+vitruvian/
 ├── src/
-│   ├── index.js                    # Express server entry
-│   ├── config/
-│   │   ├── agents/
-│   │   │   ├── vitruvian.js        # Gyasi: agent ID, voice, tools, prompt ref
-│   │   │   └── mayvenn.js          # Evan: agent ID, voice, tools, prompt ref
-│   │   └── shared.js              # DB, Twilio, common config
+│   ├── index.js                        # Express server
+│   ├── config.js                       # Agent config, paths, API keys
 │   ├── routes/
-│   │   ├── tools.js               # All server tool endpoints
-│   │   ├── webhooks.js            # Call status + conversation end
-│   │   └── calls.js               # Outbound call triggers
+│   │   ├── tools.js                    # All server tool endpoints
+│   │   └── webhooks.js                 # Post-call webhook handler
 │   ├── services/
-│   │   ├── memory.js              # User memory CRUD
-│   │   ├── sms.js                 # Twilio SMS
-│   │   ├── summary.js             # Post-call summary generation (Claude)
-│   │   └── db.js                  # PostgreSQL connection + queries
+│   │   ├── memory.js                   # Read/write members.json + stories
+│   │   ├── story-writer.js             # Post-call Claude narrative rewrite
+│   │   ├── summarizer.js               # Transcript → summary (Claude)
+│   │   ├── sms.js                      # Twilio SMS
+│   │   └── curriculum.js               # Course content retrieval
 │   └── prompts/
-│       ├── gyasi.md               # Vitruvian system prompt
-│       └── evan.md                # Mayvenn system prompt
-├── scripts/
-│   ├── setup-agent.js             # Create/update ElevenLabs agent
-│   ├── make-call.js               # Single outbound call
-│   ├── batch-call.js              # Batch calls from CSV
-│   └── migrate.js                 # Database migration
-├── migrations/
-│   └── 001_initial.sql            # Create tables
+│       ├── gyasi-system.md             # ElevenLabs agent system prompt
+│       ├── summarize.md                # Summary generation prompt
+│       └── rewrite-story.md            # Story rewrite prompt
+├── data/
+│   ├── members.json                    # Member index
+│   ├── stories/                        # Member narratives (.md)
+│   ├── calls/                          # Call archives (.json)
+│   └── coaching-playbook.md            # System-level coaching insights
 ├── config/
-│   ├── knowledge/
-│   │   ├── vitruvian-curriculum.md
-│   │   └── mayvenn-ambassador.md
-│   └── sample-leads.csv
-├── docs/
-│   ├── architecture.md
-│   └── PRD.md (this file)
+│   ├── knowledge-base.md               # Vitruvian Man curriculum
+│   └── sample-data/                    # Example member stories for testing
+├── scripts/
+│   ├── setup-agent.js                  # Create/update ElevenLabs agent + tools
+│   └── migrate-to-sqlite.js            # Future: JSON → SQLite migration
 ├── .env.example
 ├── package.json
+├── PRD.md
 └── README.md
 ```
 
 ---
 
-## 9. Environment Variables
+## 7. Environment Variables
 
 ```bash
-# === Mode ===
-AGENT_MODE=vitruvian              # "vitruvian" or "mayvenn"
-
-# === Database ===
-DATABASE_URL=postgresql://user:pass@host:5432/voice_agent
+# === ElevenLabs ===
+ELEVENLABS_API_KEY=xxx
+ELEVENLABS_AGENT_ID=agent_3601kk02sk5cfq583ned6q34k6s2
 
 # === Twilio ===
 TWILIO_ACCOUNT_SID=xxx
 TWILIO_AUTH_TOKEN=xxx
-TWILIO_PHONE_NUMBER=+18559364637
+TWILIO_PHONE_NUMBER=+15105883049
 
-# === ElevenLabs ===
-ELEVENLABS_API_KEY=xxx
-
-# === Vitruvian Agent ===
-VITRUVIAN_AGENT_ID=agent_3601kk02sk5cfq583ned6q34k6s2
-VITRUVIAN_PHONE_NUMBER_ID=xxx
-
-# === Mayvenn Agent ===
-MAYVENN_AGENT_ID=agent_1401kk2g94smfccvm4g45gerpt23
-MAYVENN_PHONE_NUMBER_ID=phnum_1301kk2g9he6epxbedg12ze64j4w
-
-# === Claude (for post-call summaries) ===
+# === Claude (post-call summaries + story rewrites) ===
 ANTHROPIC_API_KEY=xxx
+CLAUDE_MODEL=claude-sonnet-4-6
 
 # === Server ===
 PORT=3000
 BASE_URL=https://your-server.replit.app
+DATA_DIR=./data
 ```
+
+---
+
+## 8. ElevenLabs Agent Configuration
+
+| Setting | Value |
+|---------|-------|
+| Agent ID | `agent_3601kk02sk5cfq583ned6q34k6s2` |
+| Voice | Gyasi PVC `ta5vPsZm54WOCYibe6OP` |
+| LLM | `claude-3-5-sonnet` |
+| Temperature | 0.0 |
+| Stability | 0.5 |
+| Similarity | 0.8 |
+| Speed | 1.0 |
+| TTS Model | `eleven_turbo_v2` |
+| Knowledge Base | Vitruvian Man curriculum (`RsT0F05SEOXGwH7MbyvY`) |
+| Tools | get_member_context, save_note, log_mood, update_progress, send_sms, get_course_content |
+| Post-call webhook | `{BASE_URL}/webhooks/conversation-end` |
+
+---
+
+## 9. Scaling Path
+
+| Phase | Users | Index | Stories | What Changes |
+|-------|-------|-------|---------|--------------|
+| Launch | 0 – 1K | `members.json` | `.md` files | Nothing. Ship this. |
+| Growth | 1K – 10K | `members.json` | `.md` files | Maybe file-locking on writes |
+| Scale | 10K – 1M | SQLite | `.md` files | Swap JSON for SQLite (2hr migration). Stories unchanged. |
+| Intelligence | 500+ members | + Vector DB | `.md` files (with frontmatter) | Add Layer 4: cross-user pattern analysis → coaching playbook |
+
+### Future: Collective Intelligence (Phase 4+)
+
+When member count justifies it, add a VDB layer for cross-user analysis:
+
+```
+Weekly analysis cycle:
+
+1. Ingest all member stories (frontmatter tags + prose) into VDB
+2. Run pattern queries:
+   - "Common triggers for relapse after 14+ day streaks?"
+   - "What coaching approaches correlate with longer streaks?"
+   - "Members stuck on Module 1 for 2+ weeks — what do they have in common?"
+3. Synthesize findings into coaching-playbook.md
+4. Agent reads playbook alongside individual story → all members benefit
+```
+
+The YAML frontmatter in every story file is pre-structured for VDB ingestion. No reprocessing needed when this layer is added.
 
 ---
 
 ## 10. Milestones
 
 ### Phase 1: Foundation (Week 1)
-- [ ] Database schema + migration script
-- [ ] Agent config loader (switch by `AGENT_MODE`)
-- [ ] `get_member_context` tool — lookup user by phone, return profile + memory
-- [ ] `send_sms` tool — send SMS mid-call via Twilio
-- [ ] `save_note` tool — persist a memory key during the call
-- [ ] Post-call webhook — save transcript + basic outcome
-- [ ] Wire tools to both ElevenLabs agents
+- [ ] Data directory setup + initial `members.json`
+- [ ] `get_member_context` tool — read index + story + recent calls
+- [ ] `save_note` tool — scratch capture during calls
+- [ ] `send_sms` tool — resource delivery via Twilio
+- [ ] Post-call webhook — save transcript to `calls/` directory
+- [ ] Wire tools to ElevenLabs agent via setup script
+- [ ] Test: call in → tool fires → context returned → call ends → transcript saved
 
-### Phase 2: Intelligence (Week 2)
-- [ ] Post-call summary generation via Claude
-- [ ] Automatic memory extraction from transcripts
-- [ ] `log_mood` tool (Vitruvian)
-- [ ] `update_progress` tool (Vitruvian)
-- [ ] `schedule_followup` tool (Mayvenn)
-- [ ] Outbound call scripts (single + batch)
+### Phase 2: Memory (Week 2)
+- [ ] Summarizer service — transcript → 3-4 sentence summary via Claude
+- [ ] Story writer service — Claude rewrites `.md` narrative post-call
+- [ ] Story rewrite prompt engineering and testing
+- [ ] `log_mood` tool
+- [ ] `update_progress` tool
+- [ ] Index auto-update on call end
+- [ ] Test: call in → personalized response → call ends → story rewritten → next call reflects new context
 
-### Phase 3: Operations (Week 3)
-- [ ] Follow-up call scheduler (auto-retry no-answers, scheduled callbacks)
-- [ ] `check_autopilot` tool (Mayvenn — hit Mayvenn API)
-- [ ] `get_course_content` tool (Vitruvian — return relevant curriculum section)
-- [ ] Call outcome dashboard (or at minimum, CSV export)
-- [ ] Voicemail detection + drop
+### Phase 3: Coaching Depth (Week 3)
+- [ ] `get_course_content` tool — curriculum section retrieval
+- [ ] First-call intake flow (new member detection + onboarding)
+- [ ] Enhance Gyasi system prompt with memory-aware coaching instructions
+- [ ] SMS resource library (journal prompts, crisis info, module links)
+- [ ] Test with 5-10 real members through multi-call journeys
 
-### Phase 4: Scale (Week 4+)
-- [ ] Webhook from Mayvenn app → auto-trigger onboarding call on new signup
-- [ ] A/B test different prompts/voices
-- [ ] Per-user call cadence rules (don't over-call)
-- [ ] Analytics: conversion rates, avg duration, memory utilization
-- [ ] Multi-number support (different numbers per agent)
+### Phase 4: Operations (Week 4+)
+- [ ] Deploy to production (Replit or dedicated host)
+- [ ] Proactive outreach — check-in SMS if no call in X days
+- [ ] Call outcome tracking + basic reporting
+- [ ] Coaching playbook (manually curated from early call patterns)
+- [ ] Voicemail detection
+- [ ] `migrate-to-sqlite.js` script (ready but not deployed until needed)
 
 ---
 
 ## 11. Success Metrics
 
-| Metric | Gyasi (Vitruvian) | Evan (Mayvenn) |
-|--------|-------------------|----------------|
-| **Primary** | Returning caller rate (>2 calls) | AutoPilot activation rate |
-| **Secondary** | Self-reported days clean | Call-to-commitment conversion |
-| **Engagement** | Avg call duration >5 min | Avg call duration 4-6 min |
-| **Quality** | "Agent remembered me" (transcript analysis) | SMS delivered + opened |
-| **Cost** | <$0.50/call | <$0.30/call (vs $10 TeleDirect) |
+| Metric | Target | How Measured |
+|--------|--------|-------------|
+| Returning callers (2+ calls) | >40% of members | members.json call count |
+| "Agent remembered me" | >80% of returning callers | Transcript analysis — member references prior context |
+| Avg call duration | >5 minutes | Call archive duration |
+| Story quality | Actionable guidance in every story | Manual review of `.md` files |
+| Days clean trend | Increasing avg across members | members.json / story frontmatter |
+| Post-call pipeline reliability | 100% of calls get stories rewritten | Call archive vs story file timestamps |
+| Tool call success rate | >95% | Tool log in call archives |
 
 ---
 
 ## 12. Open Questions
 
-1. **Database hosting?** Replit has built-in PostgreSQL, or use Supabase/Neon for external hosting.
-2. **Mayvenn API access?** Need endpoint to check AutoPilot status per ambassador. Does this exist?
-3. **Call recording consent?** Both agents should announce "This call may be recorded" — check state laws.
-4. **Gyasi identity disclosure?** Agent is instructed never to reveal it's AI. Legal implications?
-5. **Rate limits?** ElevenLabs Pro plan concurrent call limits. Batch calling may need throttling.
-6. **Phone number per agent?** Currently sharing 855 number. Should each agent have its own number?
+1. **Phone number**: Use `+15105883049` (local) or get a dedicated number for Vitruvian?
+2. **First-call intake**: How much info should Gyasi gather on first call? (Name, what brought them here, where they are — or deeper?)
+3. **Proactive outreach**: Should the system text members who haven't called in X days? What's the message?
+4. **Story rewrite cost**: Each rewrite is ~1 Claude API call ($0.01-0.05). At 100 calls/day = $1-5/day. Acceptable?
+5. **Call recording consent**: "This call may be recorded for quality purposes" — add to agent first message?
+6. **Crisis protocol**: Current system prompt routes self-harm to 988 hotline. Is that sufficient, or do we need a tool that alerts a human?
+7. **Gyasi identity**: Agent is instructed never to reveal it's AI. Legal/ethical review needed?
 
 ---
 
-## 13. Non-Goals (for now)
+## 13. What This PRD Does NOT Cover
 
-- Custom LLM proxy (running our own Claude endpoint for voice calls) — complexity not justified yet
-- Real-time ambient background audio mixing — requires WebSocket proxy, parked
-- Mobile app — SMS + phone only
-- Multi-language support
-- Video calls
+- Mayvenn ambassador onboarding (separate PRD — different memory needs, different call patterns)
+- Custom LLM proxy (ElevenLabs handles LLM calls natively for now)
+- Background ambient audio (requires WebSocket proxy — parked)
+- Mobile app (SMS + phone only)
+- Payment / subscription management
+- Course delivery platform
