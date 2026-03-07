@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vitruvian Man — Begin Your Journey</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 560px;
+      width: 100%;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+
+    .header p {
+      font-size: 15px;
+      color: #888;
+      line-height: 1.5;
+    }
+
+    .form-section {
+      margin-bottom: 32px;
+    }
+
+    .form-section h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #222;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      color: #ccc;
+      margin-bottom: 6px;
+    }
+
+    label .hint {
+      font-weight: 400;
+      color: #666;
+      font-size: 13px;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      padding: 12px 14px;
+      background: #151515;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 15px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: #4a7c59;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    select {
+      appearance: none;
+      cursor: pointer;
+    }
+
+    .scale-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .scale-group label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      background: #151515;
+      border: 1px solid #333;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+      color: #888;
+      transition: all 0.2s;
+    }
+
+    .scale-group input[type="radio"] {
+      display: none;
+    }
+
+    .scale-group input[type="radio"]:checked + span {
+      /* Handled by JS */
+    }
+
+    .scale-group label.selected {
+      background: #4a7c59;
+      border-color: #4a7c59;
+      color: #fff;
+    }
+
+    .submit-btn {
+      width: 100%;
+      padding: 16px;
+      background: #4a7c59;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 16px;
+    }
+
+    .submit-btn:hover {
+      background: #5a9469;
+    }
+
+    .submit-btn:disabled {
+      background: #333;
+      color: #666;
+      cursor: not-allowed;
+    }
+
+    .privacy-note {
+      text-align: center;
+      font-size: 12px;
+      color: #555;
+      margin-top: 16px;
+      line-height: 1.5;
+    }
+
+    .success-screen {
+      display: none;
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .success-screen .icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+    }
+
+    .success-screen h2 {
+      font-size: 24px;
+      color: #fff;
+      margin-bottom: 12px;
+    }
+
+    .success-screen p {
+      font-size: 16px;
+      color: #999;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+
+    .success-screen .phone-number {
+      display: inline-block;
+      font-size: 22px;
+      font-weight: 700;
+      color: #4a7c59;
+      padding: 12px 24px;
+      background: #151515;
+      border: 1px solid #4a7c59;
+      border-radius: 8px;
+      margin: 16px 0;
+      letter-spacing: 1px;
+    }
+
+    .error-msg {
+      background: #3a1515;
+      border: 1px solid #5a2020;
+      color: #ff6b6b;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    @media (max-width: 480px) {
+      .header h1 { font-size: 24px; }
+      body { padding: 24px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- ─── Form ─── -->
+  <div id="form-screen">
+    <div class="header">
+      <h1>Vitruvian Man</h1>
+      <p>Your journey starts with a single honest step.<br>
+        Fill this out, and your coach Gyasi will be ready when you call.</p>
+    </div>
+
+    <div id="error" class="error-msg"></div>
+
+    <form id="intake-form">
+      <!-- Basic Info -->
+      <div class="form-section">
+        <h2>About You</h2>
+
+        <div class="field">
+          <label>First name</label>
+          <input type="text" name="name" required placeholder="What should we call you?">
+        </div>
+
+        <div class="field">
+          <label>Phone number <span class="hint">— this is how Gyasi knows it's you</span></label>
+          <input type="tel" name="phone" required placeholder="+1 (305) 555-1234">
+        </div>
+
+        <div class="field">
+          <label>Email <span class="hint">— optional</span></label>
+          <input type="email" name="email" placeholder="you@email.com">
+        </div>
+      </div>
+
+      <!-- Intake Questions -->
+      <div class="form-section">
+        <h2>Where You Are</h2>
+
+        <div class="field">
+          <label>What brought you here?</label>
+          <textarea name="whatBroughtYou" required placeholder="There's no wrong answer. Just be honest."></textarea>
+        </div>
+
+        <div class="field">
+          <label>How long have you been struggling with this?</label>
+          <select name="howLong" required>
+            <option value="" disabled selected>Select...</option>
+            <option value="less-than-6-months">Less than 6 months</option>
+            <option value="6-months-to-2-years">6 months to 2 years</option>
+            <option value="2-to-5-years">2 to 5 years</option>
+            <option value="5-to-10-years">5 to 10 years</option>
+            <option value="10-plus-years">10+ years</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Are you currently in a relationship?</label>
+          <select name="relationship" required>
+            <option value="" disabled selected>Select...</option>
+            <option value="married">Married</option>
+            <option value="in-relationship">In a relationship</option>
+            <option value="single">Single</option>
+            <option value="its-complicated">It's complicated</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Does your partner know about this? <span class="hint">— if applicable</span></label>
+          <select name="partnerKnows">
+            <option value="" disabled selected>Select...</option>
+            <option value="yes-they-know">Yes, they know</option>
+            <option value="they-found-out">They found out on their own</option>
+            <option value="no-they-dont-know">No, they don't know</option>
+            <option value="not-applicable">Not applicable</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Have you tried to quit before?</label>
+          <select name="triedBefore" required>
+            <option value="" disabled selected>Select...</option>
+            <option value="no-first-time">No, this is my first time</option>
+            <option value="yes-once-or-twice">Yes, once or twice</option>
+            <option value="yes-many-times">Yes, many times</option>
+            <option value="yes-with-therapy">Yes, including with a therapist</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>When do urges hit hardest? <span class="hint">— what's the pattern?</span></label>
+          <textarea name="urgePattern" placeholder="Late at night? When stressed? When alone? After a fight? Just describe what you notice."></textarea>
+        </div>
+
+        <div class="field">
+          <label>How ready are you to make a change? <span class="hint">— 1 = just curious, 10 = all in</span></label>
+          <div class="scale-group" id="readiness-scale">
+            <!-- Generated by JS -->
+          </div>
+          <input type="hidden" name="readiness" id="readiness-input" required>
+        </div>
+
+        <div class="field">
+          <label>Anything else you want Gyasi to know? <span class="hint">— optional</span></label>
+          <textarea name="anythingElse" placeholder="Whatever's on your mind. This is between you and your coach."></textarea>
+        </div>
+      </div>
+
+      <button type="submit" class="submit-btn" id="submit-btn">Begin Your Journey</button>
+
+      <p class="privacy-note">
+        🔒 Everything you share stays between you and your coach.<br>
+        We don't share your data with anyone. Period.
+      </p>
+    </form>
+  </div>
+
+  <!-- ─── Success ─── -->
+  <div id="success-screen" class="success-screen">
+    <div class="icon">✓</div>
+    <h2>You're in, <span id="success-name"></span>.</h2>
+    <p>Your coach Gyasi is ready for you.</p>
+    <p>Call anytime — day or night:</p>
+    <div class="phone-number" id="success-phone"></div>
+    <p style="margin-top: 24px; color: #666;">When you call, Gyasi will already know who you are.<br>No need to explain yourself. Just talk.</p>
+  </div>
+</div>
+
+<script>
+  // Readiness scale
+  const scaleContainer = document.getElementById('readiness-scale');
+  const readinessInput = document.getElementById('readiness-input');
+
+  for (let i = 1; i <= 10; i++) {
+    const label = document.createElement('label');
+    label.textContent = i;
+    label.dataset.value = i;
+    label.addEventListener('click', () => {
+      document.querySelectorAll('.scale-group label').forEach(l => l.classList.remove('selected'));
+      label.classList.add('selected');
+      readinessInput.value = i;
+    });
+    scaleContainer.appendChild(label);
+  }
+
+  // Phone formatting
+  const phoneInput = document.querySelector('input[name="phone"]');
+  phoneInput.addEventListener('blur', () => {
+    let val = phoneInput.value.replace(/[^\d+]/g, '');
+    if (val.length === 10) val = '+1' + val;
+    if (val.length === 11 && val[0] !== '+') val = '+' + val;
+    phoneInput.value = val;
+  });
+
+  // Form submit
+  document.getElementById('intake-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submit-btn');
+    const errDiv = document.getElementById('error');
+    errDiv.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Setting up your coach...';
+
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+
+    try {
+      const res = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+
+      const result = await res.json();
+
+      if (result.success) {
+        document.getElementById('form-screen').style.display = 'none';
+        document.getElementById('success-screen').style.display = 'block';
+        document.getElementById('success-name').textContent = data.name;
+        document.getElementById('success-phone').textContent = result.callNumber || '(510) 588-3049';
+      } else {
+        errDiv.textContent = result.error || 'Something went wrong. Please try again.';
+        errDiv.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Begin Your Journey';
+      }
+    } catch (err) {
+      errDiv.textContent = 'Connection error. Please try again.';
+      errDiv.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Begin Your Journey';
+    }
+  });
+</script>
+
+</body>
+</html>
