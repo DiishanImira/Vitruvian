@@ -1,35 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * create-agent.js
- *
- * Creates the ElevenLabs Conversational AI agent for Gyasi.
- * Run this once to get your agent_id (or re-run to create a new agent).
- *
- * Usage:
- *   node scripts/create-agent.js
- *
- * IMPORTANT NOTE on Custom LLM:
- * The Gyasi voice (VcnjiECS8LNCkWQkd4p8) is an Instant Voice Clone (IVC).
- * ElevenLabs does NOT allow Custom LLM endpoints with IVC voices.
- * This script uses ElevenLabs' native Claude integration (claude-3-5-sonnet)
- * with the full Gyasi system prompt embedded directly.
- *
- * To use a Custom LLM (/llm endpoint), Diishan would need to upgrade
- * Gyasi's voice clone to a Professional Voice Clone (PVC) in ElevenLabs.
- * See: https://elevenlabs.io/voice-lab
- *
- * After running, copy the agent_id into your .env:
- *   ELEVENLABS_AGENT_ID=<agent_id>
- */
-
 require('dotenv').config();
 
-const { buildGyasiPrompt } = require('../src/prompts/gyasi');
+const fs = require('fs');
+const path = require('path');
+
+const SYSTEM_PROMPT = fs.readFileSync(
+  path.join(__dirname, '..', 'src', 'prompts', 'gyasi-system.md'),
+  'utf-8'
+);
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'VcnjiECS8LNCkWQkd4p8';
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'ta5vPsZm54WOCYibe6OP';
 
 if (!ELEVENLABS_API_KEY) {
   console.error('Error: ELEVENLABS_API_KEY not set in .env');
@@ -37,22 +20,19 @@ if (!ELEVENLABS_API_KEY) {
 }
 
 async function createAgent() {
-  // Build the full Gyasi prompt (no member context for voice — anonymous caller)
-  const systemPrompt = buildGyasiPrompt(null);
-
   console.log('Creating ElevenLabs Conversational AI agent...');
   console.log(`Voice ID: ${VOICE_ID}`);
-  console.log(`LLM: claude-3-5-sonnet (ElevenLabs native — required for IVC voices)`);
+  console.log(`LLM: claude-3-5-sonnet (ElevenLabs native)`);
   console.log('');
 
   const payload = {
     name: 'Gyasi Hantman — Vitruvian Man Coach',
     conversation_config: {
       agent: {
-        first_message: "Hey, this is Gyasi. I'm glad you called. How are you doing right now?",
+        first_message: "Hey brother, what's up, how you feeling?",
         language: 'en',
         prompt: {
-          prompt: systemPrompt,
+          prompt: SYSTEM_PROMPT,
           llm: 'claude-3-5-sonnet',
         },
       },
@@ -83,7 +63,7 @@ async function createAgent() {
 
     const agentId = data.agent_id;
 
-    console.log('✅ Agent created successfully!');
+    console.log('Agent created successfully!');
     console.log('');
     console.log(`Agent ID: ${agentId}`);
     console.log('');
@@ -91,13 +71,19 @@ async function createAgent() {
     console.log(`1. Add to your .env file:`);
     console.log(`   ELEVENLABS_AGENT_ID=${agentId}`);
     console.log('');
-    console.log('2. Set Twilio webhook URLs (after Replit deploy):');
-    console.log('   Voice: https://YOUR_REPLIT_URL.repl.co/webhook/voice');
-    console.log('   SMS:   https://YOUR_REPLIT_URL.repl.co/webhook/sms');
+    console.log('2. Configure ElevenLabs server tools pointing to your deployed URL:');
+    console.log('   - get_member_context: POST /api/tools/get-context');
+    console.log('   - save_note: POST /api/tools/save-note');
+    console.log('   - log_mood: POST /api/tools/log-mood');
+    console.log('   - update_progress: POST /api/tools/update-progress');
+    console.log('   - send_sms: POST /api/tools/send-sms');
     console.log('');
-    console.log('3. To upgrade to Custom LLM (more control, member context on calls):');
-    console.log('   → Upgrade Gyasi\'s voice to Professional Voice Clone in ElevenLabs');
-    console.log('   → Then update the agent to use llm: "custom-llm" with your /llm URL');
+    console.log('3. Set ElevenLabs post-call webhook:');
+    console.log('   POST https://YOUR_URL/webhooks/conversation-end');
+    console.log('');
+    console.log('4. Set Twilio webhook URLs:');
+    console.log('   Voice: https://YOUR_URL/webhook/voice');
+    console.log('   SMS:   https://YOUR_URL/webhook/sms');
     console.log('');
     console.log('Full response:', JSON.stringify(data, null, 2));
   } catch (err) {

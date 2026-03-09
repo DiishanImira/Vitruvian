@@ -1,13 +1,11 @@
 'use strict';
 
-/**
- * Persistent Memory Service
- * 
- * Three-layer architecture:
- *   Layer 1: members.json — indexed lookup (phone → profile)
- *   Layer 2: stories/*.md — narrative memory per member (with YAML frontmatter)
- *   Layer 3: calls/*/*.json — raw transcripts + summaries
- */
+// Persistent Memory Service
+//
+// Three-layer architecture:
+//   Layer 1: members.json — indexed lookup (phone -> profile)
+//   Layer 2: stories/<phone>.md — narrative memory per member (with YAML frontmatter)
+//   Layer 3: calls/<phone>/<date>.json — raw transcripts + summaries
 
 const fs = require('fs');
 const path = require('path');

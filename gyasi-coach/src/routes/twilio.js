@@ -2,12 +2,19 @@
 
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
 
-/**
- * Fetch ElevenLabs signed WebSocket URL for an agent.
- * Uses Node built-in https to avoid fetch compatibility issues.
- */
+const { callClaude } = require('../services/claude');
+const { sendSMS } = require('../services/twilio');
+const memory = require('../services/memory');
+
+const SYSTEM_PROMPT = fs.readFileSync(
+  path.join(__dirname, '..', 'prompts', 'gyasi-system.md'),
+  'utf-8'
+);
+
 function getSignedUrl(agentId, apiKey) {
   return new Promise((resolve, reject) => {
     const options = {
@@ -32,24 +39,7 @@ function getSignedUrl(agentId, apiKey) {
     req.end();
   });
 }
-const { callClaude } = require('../services/claude');
-const { sendSMS } = require('../services/twilio');
-const { buildGyasiPrompt } = require('../prompts/gyasi');
-const {
-  getMember,
-  appendHistory,
-  getHistory,
-} = require('../services/member');
 
-/**
- * POST /webhook/voice
- *
- * Called by Twilio when someone dials the Twilio number.
- * Responds with TwiML that connects the call to ElevenLabs
- * Conversational AI via WebSocket stream.
- *
- * The agent_id must be set in ELEVENLABS_AGENT_ID env var.
- */
 router.post('/voice', async (req, res) => {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
   const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
@@ -67,7 +57,6 @@ router.post('/voice', async (req, res) => {
     return;
   }
 
-  // Build WebSocket URL with API key auth (escaped for XML)
   const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
 
   console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId}`);
@@ -83,63 +72,48 @@ router.post('/voice', async (req, res) => {
 </Response>`);
 });
 
-/**
- * POST /webhook/sms
- *
- * Called by Twilio when someone texts the Twilio number.
- * Loads member context, calls Claude as Gyasi, sends SMS reply.
- *
- * Twilio sends form-encoded body with:
- *   From: '+13055551234'
- *   Body: 'the message text'
- */
 router.post('/sms', async (req, res) => {
   const from = req.body.From;
   const incomingText = (req.body.Body || '').trim();
 
   console.log(`[twilio/sms] Message from ${from}: "${incomingText}"`);
 
-  // Respond to Twilio immediately (empty TwiML) — we'll send SMS via API
-  // This avoids Twilio's 15s timeout for webhook responses
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response></Response>`);
 
-  // Process asynchronously after responding
   setImmediate(async () => {
     try {
-      // Load member context
-      const member = getMember(from);
+      const member = memory.getMember(from);
+      const story = memory.getStory(from);
+      const recentCalls = memory.getRecentCalls(from, 3);
 
-      // Append incoming message to history
-      appendHistory(from, 'user', incomingText);
-
-      // Build prompt with member context (excluding history — passed separately)
-      const memberContext = {
-        phone: member.phone,
-        name: member.name,
-        streak: member.streak,
-        intake: member.intake,
-        joinedAt: member.joinedAt,
-      };
-      const systemPrompt = buildGyasiPrompt(memberContext);
-
-      // Build conversation messages (last 20 messages)
-      const messages = getHistory(from, 20);
-
-      // Ensure the last message is the user's current message
-      // (appendHistory already added it, getHistory returns it)
-      if (messages.length === 0 || messages[messages.length - 1].role !== 'user') {
-        messages.push({ role: 'user', content: incomingText });
+      let contextBlock = '';
+      if (member) {
+        contextBlock = `\n\nMEMBER CONTEXT (this person is texting you via SMS):\nName: ${member.name}\nPhone: ${from}\nTier: ${member.tier || 'foundation'}\nCalls: ${member.calls || 0}\nDays clean: ${member.daysSober || 0}\n`;
+        if (story) {
+          contextBlock += `\nMEMBER STORY:\n${story}\n`;
+        }
+        if (recentCalls.length > 0) {
+          const summaries = recentCalls
+            .filter(c => c.summary)
+            .map(c => `- ${c.date}: ${c.summary}`)
+            .join('\n');
+          if (summaries) {
+            contextBlock += `\nRECENT CALL SUMMARIES:\n${summaries}\n`;
+          }
+        }
+      } else {
+        contextBlock = `\n\nMEMBER CONTEXT: Unknown number (${from}). This is either a new person or someone who hasn't signed up yet. Be warm and welcoming. If they seem like they want coaching, suggest they sign up at the website first, or just start the conversation.\n`;
       }
 
-      // Call Claude (non-streaming for SMS)
-      const reply = await callClaude(systemPrompt, messages);
+      const smsSystemPrompt = SYSTEM_PROMPT + contextBlock +
+        '\n\nIMPORTANT: You are responding via SMS text message. Keep responses concise — 2-4 sentences max. Be warm but brief. No long paragraphs.';
 
-      // Append Gyasi's reply to history
-      appendHistory(from, 'assistant', reply);
+      const messages = [{ role: 'user', content: incomingText }];
 
-      // SMS has a 1600 char limit — split if needed
+      const reply = await callClaude(smsSystemPrompt, messages);
+
       const chunks = splitSMS(reply);
 
       for (const chunk of chunks) {
@@ -150,7 +124,6 @@ router.post('/sms', async (req, res) => {
     } catch (err) {
       console.error(`[twilio/sms] Error processing message from ${from}:`, err.message);
 
-      // Best-effort fallback SMS
       try {
         await sendSMS(
           from,
@@ -163,12 +136,6 @@ router.post('/sms', async (req, res) => {
   });
 });
 
-/**
- * Split a long message into SMS-sized chunks (max 1600 chars each).
- * Tries to split on sentence boundaries.
- * @param {string} text
- * @returns {string[]}
- */
 function splitSMS(text, maxLen = 1600) {
   if (text.length <= maxLen) return [text];
 
@@ -176,7 +143,6 @@ function splitSMS(text, maxLen = 1600) {
   let remaining = text;
 
   while (remaining.length > maxLen) {
-    // Try to find a sentence boundary
     let splitAt = remaining.lastIndexOf('. ', maxLen);
     if (splitAt === -1) splitAt = remaining.lastIndexOf(' ', maxLen);
     if (splitAt === -1) splitAt = maxLen;
