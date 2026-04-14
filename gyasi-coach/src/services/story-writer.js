@@ -129,8 +129,15 @@ Only include themes that have actually come up in calls. Update/add to existing 
 ## Key Facts
 [bullet list — specific confirmed details: triggers, relationship status updates, faith context, streaks, commitments made, anything concrete]
 
+## Open Questions
+[Things that surfaced but weren't resolved — partial disclosures, hints, deflections, or topics that seem important but haven't been explored yet. For each: what was hinted at, why it might matter, and when/how to approach it. This list grows and shrinks across calls as questions get answered or become irrelevant.]
+
+- **[Topic]** — [what was hinted at or left unresolved] — [why it might matter] — [when/how to approach]
+
+Merge any existing Open Questions from the previous story. Mark questions as RESOLVED if they were answered in this call. Add new ones from this transcript. Remove ones that are no longer relevant.
+
 ## Next Call Guidance
-[This section is the roadmap for the NEXT call. 3-5 specific things to explore, follow up on, or push. Written as if briefing Gyasi before that call. Reference specific things from this call that need follow-up.]
+[This section is the roadmap for the NEXT call. 3-5 specific things to explore, follow up on, or push. Written as if briefing Gyasi before that call. Reference specific things from this call that need follow-up. Consider the Open Questions — which ones is the member ready to explore next?]
 ---
 
 Be specific. Use his actual words where possible. This document should make Gyasi feel like he remembers everything about this person the moment he reads it.`;
@@ -221,8 +228,17 @@ FORMAT:
 ### Connections Made
 [Did anything from this call connect to something from a previous call or their intake? Call it out explicitly. If nothing connects, say "No prior connections identified."]
 
+### Open Questions
+[Things that surfaced but weren't resolved — gaps, hints, or partial disclosures that warrant deeper exploration in a future call. For each, note WHY it might matter and WHEN to pursue it (e.g. "only when trust is deeper"). Be specific.]
+- **[Topic]** — [what was hinted at or left unresolved] — [why it might be important] — [when/how to approach it]
+
+Examples:
+- **Childhood trauma** — Member referenced "something that happened when I was young" but didn't elaborate. Didn't push — too early. Could be a root cause of the shame pattern. Revisit when trust is deeper and he brings it up again.
+- **His father** — Mentioned briefly but deflected. Seems loaded. Worth exploring gently in a later call.
+- **The "one time it really worked"** — He mentioned quitting for 3 months once but didn't say what changed. Understanding that could be the key to replicating it.
+
 ### For the Story Rewrite
-[2-3 sentences: what the story rewriter needs to know from this call to update the Meaningful Themes and Next Call Guidance]
+[2-3 sentences: what the story rewriter needs to know from this call to update the Meaningful Themes, Open Questions, and Next Call Guidance]
 ---
 
 Be specific. Use the member's actual words where possible. This is the primary input to the story rewrite — make it count.`;
