@@ -82,6 +82,32 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Temporary admin: delete a member and all their data
+app.delete('/admin/delete-member/:phone', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const memory = require('./services/memory');
+  const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+
+  const index = memory.listMembers();
+  const existed = !!index[phone];
+  delete index[phone];
+  fs.writeFileSync(path.join(DATA_DIR, 'members.json'), JSON.stringify(index, null, 2));
+
+  const storyFile = path.join(DATA_DIR, 'stories', `${phone}.md`);
+  if (fs.existsSync(storyFile)) fs.unlinkSync(storyFile);
+
+  const callsDir = path.join(DATA_DIR, 'calls', phone);
+  if (fs.existsSync(callsDir)) fs.rmSync(callsDir, { recursive: true, force: true });
+
+  const notesFile = path.join(DATA_DIR, 'notes', `${phone}_current.json`);
+  if (fs.existsSync(notesFile)) fs.unlinkSync(notesFile);
+
+  console.log(`[admin] Deleted all data for ${phone}`);
+  res.json({ success: true, phone, existed });
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
