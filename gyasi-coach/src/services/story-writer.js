@@ -193,20 +193,43 @@ async function rewriteStory(member, previousStory, callSummaries, midCallNotes) 
 
 // ─── Summarize Transcript ─────────────────────────────────────────────────
 
-async function summarizeTranscript(transcript, memberName) {
-  const systemPrompt = `You are summarizing a coaching call from the Vitruvian Man program (porn addiction recovery). The coach is Gyasi.
+async function summarizeTranscript(transcript, memberName, callDate) {
+  const dateLabel = callDate || new Date().toISOString().slice(0, 10);
 
-Summarize in 3-4 sentences. Include:
-- What was discussed
-- The member's emotional state
-- Any commitments they made
-- What to follow up on next time
+  const systemPrompt = `You are analyzing a coaching call from the Vitruvian Man program (porn addiction recovery). The coach is Gyasi.
 
-Be specific and concrete. This summary will be used to rewrite the member's narrative memory.`;
+Produce a structured call summary. This summary will be stored and used to rewrite the member's narrative story — specifically to update the Meaningful Themes section and Next Call Guidance. Make it rich, specific, and useful to a reader who wasn't on the call.
+
+FORMAT:
+---
+## Call Summary — ${dateLabel}
+
+### What Happened
+[2-3 sentences: what was discussed, where the conversation went]
+
+### Themes That Came Up
+[bullet list — themes, people, events that surfaced. Flag each as NEW or RECURRING]
+- **[Theme]** — [new/recurring] — [1 sentence: what was said about it]
+
+### Meaningful Moments
+[1-3 verbatim or near-verbatim quotes that carry weight — things the member actually said that matter]
+- "[quote]" — [why this matters]
+
+### What Changed
+[What shifted for the member during this call? Progress, regression, new awareness, new commitment?]
+
+### Connections Made
+[Did anything from this call connect to something from a previous call or their intake? Call it out explicitly. If nothing connects, say "No prior connections identified."]
+
+### For the Story Rewrite
+[2-3 sentences: what the story rewriter needs to know from this call to update the Meaningful Themes and Next Call Guidance]
+---
+
+Be specific. Use the member's actual words where possible. This is the primary input to the story rewrite — make it count.`;
 
   const userMessage = `Member: ${memberName}\n\nTranscript:\n${transcript}`;
 
-  return callClaude(systemPrompt, userMessage, 1000);
+  return callClaude(systemPrompt, userMessage, 1500);
 }
 
 module.exports = {
