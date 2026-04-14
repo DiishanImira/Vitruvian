@@ -199,19 +199,31 @@ async function upsertMember(phone, data) {
 
   const colNames = activeCols.map(([k]) => k);
   const colVals  = activeCols.map(([, v]) => v);
+  const updateSet = colNames.map((k, i) => `${k} = $${i + 2}`).join(', ');
 
-  const insertCols  = ['phone', ...colNames].join(', ');
-  const insertPhs   = ['$1', ...colNames.map((_, i) => `$${i + 2}`)].join(', ');
-  const updateSet   = colNames.map((k, i) => `${k} = $${i + 2}`).join(', ');
+  // If name is present we can safely INSERT or UPDATE.
+  // If name is absent, only UPDATE an existing row (avoids NOT NULL violation).
+  if (data.name) {
+    const insertCols = ['phone', ...colNames].join(', ');
+    const insertPhs  = ['$1', ...colNames.map((_, i) => `$${i + 2}`)].join(', ');
 
-  const { rows } = await pool.query(
-    `INSERT INTO members (${insertCols}, updated_at)
-     VALUES (${insertPhs}, NOW())
-     ON CONFLICT (phone) DO UPDATE SET ${updateSet}, updated_at = NOW()
-     RETURNING *`,
-    [phone, ...colVals]
-  );
-  return rowToMember(rows[0]);
+    const { rows } = await pool.query(
+      `INSERT INTO members (${insertCols}, updated_at)
+       VALUES (${insertPhs}, NOW())
+       ON CONFLICT (phone) DO UPDATE SET ${updateSet}, updated_at = NOW()
+       RETURNING *`,
+      [phone, ...colVals]
+    );
+    return rowToMember(rows[0]);
+  } else {
+    const { rows } = await pool.query(
+      `UPDATE members SET ${updateSet}, updated_at = NOW()
+       WHERE phone = $1
+       RETURNING *`,
+      [phone, ...colVals]
+    );
+    return rowToMember(rows[0] || null);
+  }
 }
 
 async function listMembers() {

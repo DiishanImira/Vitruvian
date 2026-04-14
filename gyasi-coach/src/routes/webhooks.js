@@ -41,6 +41,11 @@ router.post('/conversation-end', async (req, res) => {
   const member = await db.getMember(phone);
   const memberName = member?.name || 'Unknown';
 
+  if (!member) {
+    console.log(`[webhook/conversation-end] Unknown caller ${phone} — skipping post-call pipeline`);
+    return;
+  }
+
   const callData = {
     conversation_id,
     phone,
