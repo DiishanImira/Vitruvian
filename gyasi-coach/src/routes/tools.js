@@ -114,4 +114,40 @@ router.post('/send-sms', async (req, res) => {
   }
 });
 
+// POST /api/tools/search-history
+// ElevenLabs server tool — search past call content by topic/theme
+router.post('/search-history', async (req, res) => {
+  const { phone_number, query } = req.body;
+
+  console.log(`[tools/search-history] ${phone_number}: "${query}"`);
+
+  if (!phone_number || !query) {
+    return res.json({ found: false, message: 'Missing phone_number or query' });
+  }
+
+  try {
+    const results = await db.searchCallHistory(phone_number, query);
+
+    if (results.length === 0) {
+      return res.json({
+        found: false,
+        message: `No call history found matching "${query}".`
+      });
+    }
+
+    const formatted = results.map(r =>
+      `[${r.date}] ${r.text}`
+    ).join('\n\n---\n\n');
+
+    return res.json({
+      found: true,
+      results: formatted,
+      count: results.length,
+    });
+  } catch (err) {
+    console.error('[tools/search-history] Error:', err.message);
+    return res.json({ found: false, message: 'Search failed — try again.' });
+  }
+});
+
 module.exports = router;

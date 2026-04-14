@@ -320,6 +320,55 @@ async function getRecentCalls(phone, limit = 3) {
   }));
 }
 
+async function searchCallHistory(phone, query) {
+  // Search call_summaries and call_transcripts for relevant content
+  // Uses Postgres full-text search (tsvector/tsquery)
+  // Returns top 3 matching passages with dates
+
+  // First try summaries (faster, more curated)
+  const summaryResults = await pool.query(
+    `SELECT call_date, summary, conversation_id,
+            ts_rank(to_tsvector('english', summary), plainto_tsquery('english', $2)) AS rank
+     FROM call_summaries
+     WHERE phone = $1
+       AND to_tsvector('english', summary) @@ plainto_tsquery('english', $2)
+     ORDER BY rank DESC, call_date DESC
+     LIMIT 3`,
+    [phone, query]
+  );
+
+  if (summaryResults.rows.length > 0) {
+    return summaryResults.rows.map(r => ({
+      date: r.call_date ? new Date(r.call_date).toISOString().slice(0, 10) : null,
+      source: 'summary',
+      text: r.summary,
+      conversation_id: r.conversation_id,
+    }));
+  }
+
+  // Fallback: search transcripts
+  const transcriptResults = await pool.query(
+    `SELECT call_date, transcript, conversation_id,
+            ts_rank(to_tsvector('english', transcript), plainto_tsquery('english', $2)) AS rank
+     FROM call_transcripts
+     WHERE phone = $1
+       AND transcript IS NOT NULL
+       AND to_tsvector('english', transcript) @@ plainto_tsquery('english', $2)
+     ORDER BY rank DESC, call_date DESC
+     LIMIT 2`,
+    [phone, query]
+  );
+
+  return transcriptResults.rows.map(r => ({
+    date: r.call_date ? new Date(r.call_date).toISOString().slice(0, 10) : null,
+    source: 'transcript',
+    text: typeof r.transcript === 'string'
+      ? r.transcript.slice(0, 500) // truncate for brevity
+      : JSON.stringify(r.transcript || '').slice(0, 500),
+    conversation_id: r.conversation_id,
+  }));
+}
+
 async function getCallCount(phone) {
   const { rows } = await pool.query(
     'SELECT COUNT(*) AS count FROM call_transcripts WHERE phone = $1',
@@ -365,6 +414,7 @@ module.exports = {
   writeStory,
   saveCall,
   getRecentCalls,
+  searchCallHistory,
   getCallCount,
   saveNote,
   getNotes,

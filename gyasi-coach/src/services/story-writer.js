@@ -114,6 +114,18 @@ FORMAT:
 ## What We Know Works / Doesn't Work
 [Specific patterns observed across calls. What resonates with him? What falls flat? What approaches have moved him?]
 
+## Meaningful Themes
+Each theme is a person, event, idea, or pattern that carries emotional weight and has come up across calls. Format each as:
+
+- **[Theme Name]** (calls: [list of call numbers or dates]) — [1-2 sentences: what it means to him, why it matters, what we know about it so far]
+
+Examples:
+- **Father** (calls: 1, 3) — Believes his father's emotional distance modeled shame. Hasn't fully unpacked whether this predates the addiction or is an assumption.
+- **Wife's ultimatum** (call: 2) — She told him she's done if he doesn't change. He made a commitment. Needs follow-up — did he keep it?
+- **Night routine** (calls: 1, 2, 3) — Phone in bedroom, boredom after 10pm is primary trigger window. Has been the main battleground.
+
+Only include themes that have actually come up in calls. Update/add to existing themes after each call. This section grows over time. Merge new themes from this transcript with any existing themes from the previous story.
+
 ## Key Facts
 [bullet list — specific confirmed details: triggers, relationship status updates, faith context, streaks, commitments made, anything concrete]
 
