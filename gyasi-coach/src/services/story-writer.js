@@ -2,11 +2,14 @@
 
 /**
  * Story Writer Service
- * 
+ *
  * Uses Claude to generate and rewrite member narrative stories.
  * Two modes:
- *   1. generateInitialStory() — from intake form answers
- *   2. rewriteStory() — after a call, using all available context
+ *   1. generateIntakeStory()       — lean hypothesis brief from intake, before call 1
+ *   2. rewriteStoryAfterCall()     — full narrative rewrite after every call
+ *
+ * Legacy exports kept for backward compatibility:
+ *   generateInitialStory(), rewriteStory(), summarizeTranscript()
  */
 
 const https = require('https');
@@ -16,11 +19,11 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
 
 // ─── Claude API ───────────────────────────────────────────────────────────
 
-function callClaude(systemPrompt, userMessage) {
+function callClaude(systemPrompt, userMessage, maxTokens = 2000) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({
       model: CLAUDE_MODEL,
-      max_tokens: 2000,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -60,86 +63,106 @@ function callClaude(systemPrompt, userMessage) {
   });
 }
 
-// ─── Generate Initial Story (from intake) ─────────────────────────────────
+// ─── Mode 1: INTAKE STORY (called after signup, 0 prior calls) ────────────
+// Goal: lean, honest, hypothesis-driven. NOT a narrative conclusion.
+// A working document for call 1.
 
-async function generateInitialStory(member, intake) {
-  const systemPrompt = `You are generating the initial narrative memory file for a new member of the Vitruvian Man program — a porn addiction recovery coaching system.
+async function generateIntakeStory(intakeAnswers) {
+  const systemPrompt = `You are preparing a coaching brief for Gyasi, a men's coach, before his first call with a new member.
 
-Based on their intake form answers, create a Member Story that will be read by the AI coach (Gyasi) before their first call.
+Based ONLY on the intake answers below, write a lean member brief. Do not infer or conclude — only note what was literally said, then generate hypotheses to test.
 
-The story must include:
-
-1. YAML frontmatter with structured tags (see format below)
-2. A brief "Who They Are" section — humanize them from the data
-3. "Where They Are" — current state based on intake answers
-4. "What We Know So Far" — key details from intake that should guide the first call
-5. "First Call Guidance" — specific coaching direction for the very first conversation
-
-YAML frontmatter format:
+FORMAT:
 ---
-phone: "{phone}"
-name: "{name}"
-tier: "{tier}"
-signup: "{date}"
-calls: 0
-last_call: null
-days_clean: {days}
-current_module: 0
-status: active
-tags: [list, of, relevant, tags]
+## What We Know (Intake Facts)
+[bullet list — only literal answers, no interpretation]
+
+## Hypotheses to Explore
+[3-5 numbered hypotheses, each clearly labeled as an assumption]
+Example format: "H1: [Assumption] — suggested question: [specific question to test this]"
+
+## First Call Priorities
+[2-3 specific things Gyasi should focus on in call 1 — keep it tight, not a script]
+
+## Open Questions
+[things the intake didn't reveal that matter — what we don't know yet]
 ---
 
-Tags should reflect what we know: relationship status, what brought them here, how long they've struggled, emotional state. Use lowercase, hyphenated.
+Keep it under 400 words. Be honest about uncertainty. This is a working hypothesis document, not a story.`;
 
-Write as narrative, not a clinical report. This is a person, not a case file.`;
+  const userMessage = `INTAKE DATA:\n${intakeAnswers}`;
 
-  const userMessage = `New member intake data:
-
-Name: ${member.name}
-Phone: ${member.phone}
-Email: ${member.email || 'not provided'}
-Tier: ${member.tier || 'foundation'}
-Signup date: ${new Date().toISOString().slice(0, 10)}
-
-Intake answers:
-- What brought you here? ${intake.whatBroughtYou || 'not answered'}
-- How long have you been struggling with this? ${intake.howLong || 'not answered'}
-- Are you currently in a relationship? ${intake.relationship || 'not answered'}
-- Has your partner found out? ${intake.partnerKnows || 'not answered'}
-- Have you tried to quit before? ${intake.triedBefore || 'not answered'}
-- What does a typical day look like when urges hit? ${intake.urgePattern || 'not answered'}
-- On a scale of 1-10, how ready are you to make a change? ${intake.readiness || 'not answered'}
-- Is there anything else you want your coach to know? ${intake.anythingElse || 'not answered'}
-
-Generate their initial Member Story.`;
-
-  return callClaude(systemPrompt, userMessage);
+  return callClaude(systemPrompt, userMessage, 1000);
 }
 
-// ─── Rewrite Story (post-call) ────────────────────────────────────────────
+// ─── Mode 2: POST-CALL REWRITE (called after every call, 1+ prior calls) ──
+// Goal: full rewrite incorporating everything known. Replace the previous story entirely.
+
+async function rewriteStoryAfterCall(previousStory, transcript, callDate, callCount) {
+  const systemPrompt = `You are updating the coaching file for a member of the Vitruvian Man program after a coaching call with Gyasi.
+
+Rewrite the member story completely — this replaces the previous version. Use the call transcript and any prior story context to build the most accurate, useful picture of who this person is.
+
+FORMAT:
+---
+## Who He Is
+[2-3 paragraphs. Specific. Based on what actually came out in calls, not intake assumptions. Update and correct anything from prior story that the conversation validated or disproved.]
+
+## Where He Is Right Now
+[Current state — emotional, motivational, relational. What's the actual terrain at this moment?]
+
+## What We Know Works / Doesn't Work
+[Specific patterns observed across calls. What resonates with him? What falls flat? What approaches have moved him?]
+
+## Key Facts
+[bullet list — specific confirmed details: triggers, relationship status updates, faith context, streaks, commitments made, anything concrete]
+
+## Next Call Guidance
+[This section is the roadmap for the NEXT call. 3-5 specific things to explore, follow up on, or push. Written as if briefing Gyasi before that call. Reference specific things from this call that need follow-up.]
+---
+
+Be specific. Use his actual words where possible. This document should make Gyasi feel like he remembers everything about this person the moment he reads it.`;
+
+  const userMessage = `PREVIOUS STORY:
+${previousStory || 'No previous story.'}
+
+CALL TRANSCRIPT:
+${transcript}
+
+CALL DATE: ${callDate}
+TOTAL CALLS TO DATE: ${callCount}`;
+
+  return callClaude(systemPrompt, userMessage, 2000);
+}
+
+// ─── Legacy: Generate Initial Story (from intake) ─────────────────────────
+// Kept for backward compatibility. New code should use generateIntakeStory().
+
+async function generateInitialStory(member, intake) {
+  const intakeAnswers = [
+    `Name: ${member.name}`,
+    `Phone: ${member.phone}`,
+    `Email: ${member.email || 'not provided'}`,
+    `Tier: ${member.tier || 'foundation'}`,
+    `Signup date: ${new Date().toISOString().slice(0, 10)}`,
+    `What brought you here: ${intake.whatBroughtYou || 'not answered'}`,
+    `How long struggling: ${intake.howLong || 'not answered'}`,
+    `In a relationship: ${intake.relationship || 'not answered'}`,
+    `Partner knows: ${intake.partnerKnows || 'not answered'}`,
+    `Tried to quit before: ${intake.triedBefore || 'not answered'}`,
+    `Urge pattern: ${intake.urgePattern || 'not answered'}`,
+    `Readiness (1-10): ${intake.readiness || 'not answered'}`,
+    `Anything else: ${intake.anythingElse || 'not answered'}`,
+  ].join('\n');
+
+  return generateIntakeStory(intakeAnswers);
+}
+
+// ─── Legacy: Rewrite Story (post-call) ────────────────────────────────────
+// Kept for backward compatibility. New code should use rewriteStoryAfterCall().
 
 async function rewriteStory(member, previousStory, callSummaries, midCallNotes) {
-  const systemPrompt = `You are maintaining the narrative memory for a coaching client in the Vitruvian Man program — a porn addiction recovery system.
-
-Rewrite their Member Story based on ALL available information. This file is what the coach reads before the next call.
-
-Include:
-1. YAML frontmatter — update tags to reflect current patterns
-2. "Where He Is" — current state, what just happened
-3. "Patterns" — behaviors that keep showing up across calls. Triggers, coping mechanisms, timing patterns, emotional cycles.
-4. "What's Working" — positive signals, engagement, breakthroughs
-5. "What's Not" — gaps, stalls, risks, things the member avoids
-6. "Next Call Guidance" — specific coaching direction. Reference Vitruvian Man course concepts (Compounding Machine, Depletive vs Accretive Inputs, brainwashing framework) where the member is ready for them.
-
-Rules:
-- Preserve insights from the previous story that still hold
-- Update patterns with new evidence — an "emerging" pattern may now be "confirmed"
-- Add new insights from the latest call
-- Be specific, not generic. "Late-night triggers" not "has triggers."
-- Write as narrative, not a report
-- "Next Call Guidance" should give actionable coaching direction, not vague suggestions`;
-
-  const callSummaryText = callSummaries.map((c, i) => 
+  const callSummaryText = callSummaries.map((c, i) =>
     `Call ${i + 1} (${c.date}): ${c.summary}`
   ).join('\n\n');
 
@@ -147,21 +170,13 @@ Rules:
     ? `\nMid-call notes from latest call:\n${midCallNotes.map(n => `- ${n.note}`).join('\n')}`
     : '';
 
-  const userMessage = `Member: ${member.name} (${member.phone})
-Tier: ${member.tier || 'foundation'}
-Total calls: ${member.calls || 0}
-Days clean: ${member.daysSober || 0}
+  const transcript = `${callSummaryText}${notesText}`;
+  const callDate = callSummaries.length > 0
+    ? callSummaries[callSummaries.length - 1].date
+    : new Date().toISOString().slice(0, 10);
+  const callCount = member.calls || callSummaries.length;
 
-PREVIOUS STORY:
-${previousStory || 'No previous story.'}
-
-ALL CALL SUMMARIES (chronological):
-${callSummaryText || 'No calls yet.'}
-${notesText}
-
-Rewrite the Member Story.`;
-
-  return callClaude(systemPrompt, userMessage);
+  return rewriteStoryAfterCall(previousStory, transcript, callDate, callCount);
 }
 
 // ─── Summarize Transcript ─────────────────────────────────────────────────
@@ -179,10 +194,14 @@ Be specific and concrete. This summary will be used to rewrite the member's narr
 
   const userMessage = `Member: ${memberName}\n\nTranscript:\n${transcript}`;
 
-  return callClaude(systemPrompt, userMessage);
+  return callClaude(systemPrompt, userMessage, 1000);
 }
 
 module.exports = {
+  // Primary exports (new API)
+  generateIntakeStory,
+  rewriteStoryAfterCall,
+  // Legacy exports (backward compat)
   generateInitialStory,
   rewriteStory,
   summarizeTranscript,
