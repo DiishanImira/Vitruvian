@@ -9,9 +9,20 @@ An AI coaching system for men recovering from porn addiction, powered by Gyasi H
 - **Runtime**: Node.js (>=18)
 - **Framework**: Express.js
 - **Package manager**: npm
-- **Memory**: File-based three-layer system (members.json index + per-member .md stories + per-call .json archives)
+- **Memory**: Four-layer PostgreSQL database (members, member_stories, call_transcripts, call_summaries) + file-based notes for transient mid-call scratchpad
 - **AI**: Anthropic Claude (story generation, rewrites, SMS replies), ElevenLabs Conversational AI (voice)
 - **Telephony**: Twilio (voice routing, SMS)
+
+## Four-Layer Memory Architecture
+
+| Layer | Table | Purpose |
+|-------|-------|---------|
+| 1 | `members` | Profile, intake answers, progress stats |
+| 2 | `member_stories` | Living narrative — overwritten after each call |
+| 3 | `call_transcripts` | Raw verbatim transcript per call |
+| 4 | `call_summaries` | Claude-generated per-call summary (chronological timeline) |
+
+Notes (mid-call scratchpad) remain file-based in `data/notes/` — they are transient and cleared after each call.
 
 ## Project Structure
 
@@ -24,20 +35,18 @@ gyasi-coach/
     routes/
       signup.js               # POST /api/signup — member registration + initial story generation
       tools.js                # POST /api/tools/* — ElevenLabs server tools (get-context, save-note, log-mood, update-progress, send-sms)
-      webhooks.js             # POST /webhooks/* — ElevenLabs post-call webhook (transcript save, story rewrite) + Twilio call status
+      webhooks.js             # POST /webhooks/* — ElevenLabs post-call webhook (saves transcript+summary, rewrites story)
       twilio.js               # POST /webhook/voice and /webhook/sms — Twilio voice + SMS webhooks
     services/
-      memory.js               # File-based persistent memory (3-layer: index, stories, calls, notes)
+      db.js                   # PostgreSQL database service (4-layer memory — primary data layer)
+      memory.js               # Legacy file-based service (kept for reference, no longer used by routes)
       story-writer.js          # Claude-powered story generation (initial + post-call rewrite + transcript summary)
       claude.js               # Anthropic Claude API integration (streaming + non-streaming)
       twilio.js               # Twilio SMS sending helper
     prompts/
       gyasi-system.md         # Gyasi AI coach system prompt (memory-aware, instructs tool usage)
   data/
-    members.json              # Layer 1: phone → profile index
-    stories/                  # Layer 2: per-member narrative .md files (auto-created)
-    calls/                    # Layer 3: per-member call transcripts + summaries (auto-created)
-    notes/                    # Mid-call scratch notes (auto-created)
+    notes/                    # Transient mid-call scratchpad (auto-created, cleared after call)
   AGENT_CONFIGS.md            # ElevenLabs agent baseline settings documentation
   .env.example                # Template for required environment variables
 
@@ -57,13 +66,14 @@ PRD.md                            # Product requirements document (v2.0)
 - `POST /api/tools/log-mood` — ElevenLabs server tool: records emotional state
 - `POST /api/tools/update-progress` — ElevenLabs server tool: updates days clean / module progress
 - `POST /api/tools/send-sms` — ElevenLabs server tool: sends SMS via Twilio
-- `POST /webhooks/conversation-end` — ElevenLabs post-call webhook (saves transcript, rewrites story)
+- `POST /webhooks/conversation-end` — ElevenLabs post-call webhook (saves transcript, saves summary, rewrites story)
 - `POST /webhooks/call-status` — Twilio call status tracking
-- `POST /webhook/voice` — Twilio voice webhook (bridges to ElevenLabs Conversational AI)
+- `POST /webhook/voice` — Twilio voice webhook (pre-loads member context, bridges to ElevenLabs)
 - `POST /webhook/sms` — Twilio SMS webhook (Claude-powered SMS replies with member context)
-- `GET /debug/members` — Debug: list all members (dev only)
-- `GET /debug/story/:phone` — Debug: view member story (dev only)
-- `GET /debug/calls/:phone` — Debug: view member call history (dev only)
+- `GET /debug/members` — Debug: list all members
+- `GET /debug/story/:phone` — Debug: view member story
+- `GET /debug/calls/:phone` — Debug: view member call summaries
+- `DELETE /admin/delete-member/:phone` — Admin: delete all data for a member across all four layers
 
 ## Required Environment Variables / Secrets
 
@@ -72,13 +82,14 @@ PRD.md                            # Product requirements document (v2.0)
 - `ELEVENLABS_AGENT_ID` — ElevenLabs Conversational AI agent ID
 - `TWILIO_ACCOUNT_SID` — Twilio account SID
 - `TWILIO_AUTH_TOKEN` — Twilio auth token
-- `TWILIO_PHONE_NUMBER` — Twilio phone number (e.g. +15105883049)
+- `TWILIO_PHONE_NUMBER` — Twilio phone number
+- `DATABASE_URL` — PostgreSQL connection string (auto-set by Replit)
 
 ### Optional
 
 - `CLAUDE_MODEL` — Claude model to use (default: claude-sonnet-4-6)
 - `BASE_URL` — Public server URL
-- `DATA_DIR` — Data directory path (default: ./data)
+- `DATA_DIR` — Data directory path (for notes scratchpad; default: ./data)
 - `VITRUVIAN_CALL_NUMBER` — Phone number shown to members after signup
 
 ## Configuration

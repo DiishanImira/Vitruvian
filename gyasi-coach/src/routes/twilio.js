@@ -4,45 +4,18 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 
 const { callClaude } = require('../services/claude');
 const { sendSMS } = require('../services/twilio');
-const memory = require('../services/memory');
+const db = require('../services/db');
 
 const SYSTEM_PROMPT = fs.readFileSync(
   path.join(__dirname, '..', 'prompts', 'gyasi-system.md'),
   'utf-8'
 );
 
-function getSignedUrl(agentId, apiKey) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.elevenlabs.io',
-      path: `/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
-      method: 'GET',
-      headers: { 'xi-api-key': apiKey },
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed);
-        } catch (e) {
-          reject(new Error(`Failed to parse ElevenLabs response: ${data}`));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
 router.post('/voice', async (req, res) => {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
-  const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
   const from = req.body.From || 'unknown';
 
   console.log(`[twilio/voice] Incoming call from ${from}`);
@@ -57,21 +30,20 @@ router.post('/voice', async (req, res) => {
     return;
   }
 
-  // 1. Look up member context BEFORE connecting to ElevenLabs
   let firstMessage;
   let contextOverride = '';
 
   try {
-    const member = memory.getMember(from);
-    const story = memory.getStory(from);
-    const recentCalls = memory.getRecentCalls(from, 3);
+    const [member, story, recentCalls] = await Promise.all([
+      db.getMember(from),
+      db.getStory(from),
+      db.getRecentCalls(from, 3),
+    ]);
 
     if (member) {
-      // Known member — personalized greeting
       const firstName = member.name ? member.name.split(' ')[0] : 'brother';
       firstMessage = `Hey ${firstName}, good to hear from you.`;
 
-      // Build context block to prepend to system prompt
       contextOverride = `\n\n═══════════════════════════════════════\nCALLER CONTEXT (loaded before call — use this immediately):\nName: ${member.name}\nPhone: ${from}\nDays clean: ${member.daysSober || 'unknown'}\nTotal calls: ${member.calls || 0}\n`;
 
       if (story) {
@@ -89,37 +61,32 @@ router.post('/voice', async (req, res) => {
       contextOverride += '═══════════════════════════════════════\n';
       console.log(`[twilio/voice] Known member: ${member.name} — context injected`);
     } else {
-      // Unknown caller — warm unknown greeting
-      firstMessage = "Hey, this is Jyasi. What's your name, brother?";
+      firstMessage = "Hey, this is Gyasi. What's your name, brother?";
       console.log(`[twilio/voice] Unknown caller: ${from}`);
     }
   } catch (err) {
     console.error('[twilio/voice] Context lookup error:', err.message);
-    firstMessage = "Hey, this is Jyasi. What's your name, brother?";
+    firstMessage = "Hey, this is Gyasi. What's your name, brother?";
   }
 
-  // 2. Build conversation_config_override with pre-loaded context
   const conversationConfig = {
     agent: {
       first_message: firstMessage,
     }
   };
 
-  // If we have member context, prepend it to the system prompt
   if (contextOverride) {
     conversationConfig.agent.prompt = {
       prompt: contextOverride + SYSTEM_PROMPT
     };
   }
 
-  // 3. Encode for TwiML parameter
   const clientData = JSON.stringify({
     conversation_config_override: conversationConfig
   });
 
   console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId}`);
 
-  // 4. Return TwiML with context injected via conversation_config_override parameter
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -144,9 +111,11 @@ router.post('/sms', async (req, res) => {
 
   setImmediate(async () => {
     try {
-      const member = memory.getMember(from);
-      const story = memory.getStory(from);
-      const recentCalls = memory.getRecentCalls(from, 3);
+      const [member, story, recentCalls] = await Promise.all([
+        db.getMember(from),
+        db.getStory(from),
+        db.getRecentCalls(from, 3),
+      ]);
 
       let contextBlock = '';
       if (member) {
@@ -159,9 +128,7 @@ router.post('/sms', async (req, res) => {
             .filter(c => c.summary)
             .map(c => `- ${c.date}: ${c.summary}`)
             .join('\n');
-          if (summaries) {
-            contextBlock += `\nRECENT CALL SUMMARIES:\n${summaries}\n`;
-          }
+          if (summaries) contextBlock += `\nRECENT CALL SUMMARIES:\n${summaries}\n`;
         }
       } else {
         contextBlock = `\n\nMEMBER CONTEXT: Unknown number (${from}). This is either a new person or someone who hasn't signed up yet. Be warm and welcoming. If they seem like they want coaching, suggest they sign up at the website first, or just start the conversation.\n`;
@@ -170,10 +137,7 @@ router.post('/sms', async (req, res) => {
       const smsSystemPrompt = SYSTEM_PROMPT + contextBlock +
         '\n\nIMPORTANT: You are responding via SMS text message. Keep responses concise — 2-4 sentences max. Be warm but brief. No long paragraphs.';
 
-      const messages = [{ role: 'user', content: incomingText }];
-
-      const reply = await callClaude(smsSystemPrompt, messages);
-
+      const reply = await callClaude(smsSystemPrompt, [{ role: 'user', content: incomingText }]);
       const chunks = splitSMS(reply);
 
       for (const chunk of chunks) {
@@ -183,12 +147,8 @@ router.post('/sms', async (req, res) => {
       console.log(`[twilio/sms] Replied to ${from} — ${chunks.length} message(s)`);
     } catch (err) {
       console.error(`[twilio/sms] Error processing message from ${from}:`, err.message);
-
       try {
-        await sendSMS(
-          from,
-          "Hey, I hit a snag on my end. Give me a minute and text me again — I'm here."
-        );
+        await sendSMS(from, "Hey, I hit a snag on my end. Give me a minute and text me again — I'm here.");
       } catch (fallbackErr) {
         console.error('[twilio/sms] Fallback SMS also failed:', fallbackErr.message);
       }
@@ -198,19 +158,15 @@ router.post('/sms', async (req, res) => {
 
 function splitSMS(text, maxLen = 1600) {
   if (text.length <= maxLen) return [text];
-
   const chunks = [];
   let remaining = text;
-
   while (remaining.length > maxLen) {
     let splitAt = remaining.lastIndexOf('. ', maxLen);
     if (splitAt === -1) splitAt = remaining.lastIndexOf(' ', maxLen);
     if (splitAt === -1) splitAt = maxLen;
-
     chunks.push(remaining.slice(0, splitAt + 1).trim());
     remaining = remaining.slice(splitAt + 1).trim();
   }
-
   if (remaining.length > 0) chunks.push(remaining);
   return chunks;
 }

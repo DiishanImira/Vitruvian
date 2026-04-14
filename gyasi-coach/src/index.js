@@ -6,15 +6,10 @@ const express = require('express');
 const path = require('path');
 const app = express();
 
-// ── Middleware ──────────────────────────────────────────────────────────────
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-
-// Serve static files (signup page)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
@@ -22,7 +17,6 @@ app.use((req, res, next) => {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -37,89 +31,66 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Root → redirect to signup page
-app.get('/', (req, res) => {
-  res.redirect('/signup.html');
-});
+app.get('/', (req, res) => res.redirect('/signup.html'));
 
-// Signup
 const signupRouter = require('./routes/signup');
 app.use('/api', signupRouter);
 
-// ElevenLabs server tools
 const toolsRouter = require('./routes/tools');
 app.use('/api/tools', toolsRouter);
 
-// Webhooks (ElevenLabs post-call + Twilio status)
 const webhooksRouter = require('./routes/webhooks');
 app.use('/webhooks', webhooksRouter);
 
-// Twilio SMS webhook (legacy — keep for existing config)
 const twilioRouter = require('./routes/twilio');
 app.use('/webhook', twilioRouter);
 
-// Debug endpoints (non-production)
-if (process.env.NODE_ENV !== 'production') {
-  const memory = require('./services/memory');
+// ── Debug endpoints ──────────────────────────────────────────────────────────
 
-  app.get('/debug/members', (req, res) => {
-    res.json(memory.listMembers());
-  });
+const db = require('./services/db');
 
-  app.get('/debug/story/:phone', (req, res) => {
-    const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
-    const story = memory.getStory(phone);
-    if (story) {
-      res.type('text/markdown').send(story);
-    } else {
-      res.status(404).json({ error: 'No story found for ' + phone });
-    }
-  });
+app.get('/debug/members', async (req, res) => {
+  const members = await db.listMembers();
+  res.json(members);
+});
 
-  app.get('/debug/calls/:phone', (req, res) => {
-    const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
-    res.json(memory.getRecentCalls(phone, 10));
-  });
-}
-
-// Temporary admin: delete a member and all their data
-app.delete('/admin/delete-member/:phone', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
-  const memory = require('./services/memory');
-  const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+app.get('/debug/story/:phone', async (req, res) => {
   const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+  const story = await db.getStory(phone);
+  if (story) {
+    res.type('text/markdown').send(story);
+  } else {
+    res.status(404).json({ error: 'No story found for ' + phone });
+  }
+});
 
-  const index = memory.listMembers();
-  const existed = !!index[phone];
-  delete index[phone];
-  fs.writeFileSync(path.join(DATA_DIR, 'members.json'), JSON.stringify(index, null, 2));
+app.get('/debug/calls/:phone', async (req, res) => {
+  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+  const calls = await db.getRecentCalls(phone, 10);
+  res.json(calls);
+});
 
-  const storyFile = path.join(DATA_DIR, 'stories', `${phone}.md`);
-  if (fs.existsSync(storyFile)) fs.unlinkSync(storyFile);
+// ── Admin: delete a member and all their data ────────────────────────────────
 
-  const callsDir = path.join(DATA_DIR, 'calls', phone);
-  if (fs.existsSync(callsDir)) fs.rmSync(callsDir, { recursive: true, force: true });
-
-  const notesFile = path.join(DATA_DIR, 'notes', `${phone}_current.json`);
-  if (fs.existsSync(notesFile)) fs.unlinkSync(notesFile);
-
+app.delete('/admin/delete-member/:phone', async (req, res) => {
+  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+  const existing = await db.getMember(phone);
+  await db.deleteMember(phone);
+  db.clearNotes(phone);
   console.log(`[admin] Deleted all data for ${phone}`);
-  res.json({ success: true, phone, existed });
+  res.json({ success: true, phone, existed: !!existing });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
+// ── Error handlers ───────────────────────────────────────────────────────────
 
-// Error handler
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+
 app.use((err, req, res, _next) => {
   console.error('[server] Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// ── Start ───────────────────────────────────────────────────────────────────
+// ── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
 

@@ -2,18 +2,18 @@
 
 /**
  * Webhook Routes
- * 
+ *
  * POST /webhooks/conversation-end — ElevenLabs fires this after every call.
  * Triggers the full post-call pipeline:
- *   1. Save transcript
- *   2. Generate summary
+ *   1. Save transcript to call_transcripts
+ *   2. Generate summary → save to call_summaries
  *   3. Rewrite member story
- *   4. Update index
+ *   4. Update member profile
  */
 
 const express = require('express');
 const router = express.Router();
-const memory = require('../services/memory');
+const db = require('../services/db');
 const { summarizeTranscript, rewriteStory } = require('../services/story-writer');
 
 router.post('/conversation-end', async (req, res) => {
@@ -25,10 +25,8 @@ router.post('/conversation-end', async (req, res) => {
     dynamic_variables,
   } = req.body;
 
-  // Respond immediately — processing happens async
   res.json({ received: true });
 
-  // Determine phone number
   const phone = dynamic_variables?.phone_number
     || dynamic_variables?.system__caller_id
     || req.body.caller_id;
@@ -40,10 +38,9 @@ router.post('/conversation-end', async (req, res) => {
 
   console.log(`[webhook/conversation-end] Call ended: ${conversation_id} (${phone}, ${call_duration_secs}s)`);
 
-  const member = memory.getMember(phone);
+  const member = await db.getMember(phone);
   const memberName = member?.name || 'Unknown';
 
-  // ── Step 1: Save raw call data ──
   const callData = {
     conversation_id,
     phone,
@@ -53,8 +50,6 @@ router.post('/conversation-end', async (req, res) => {
     outcome: 'completed',
     transcript: transcript || '',
     summary: null,
-    mood: null,
-    tools_used: [],
   };
 
   // ── Step 2: Generate summary ──
@@ -69,37 +64,40 @@ router.post('/conversation-end', async (req, res) => {
     }
   }
 
-  // Save call to archive
-  const filename = memory.saveCall(phone, callData);
-  console.log(`[webhook] Call saved: ${filename}`);
+  // ── Step 1 + 2 combined: Save transcript + summary to DB ──
+  await db.saveCall(phone, callData);
+  console.log(`[webhook] Call saved to DB (${conversation_id})`);
 
   // ── Step 3: Rewrite member story ──
   if (member && transcript) {
     try {
       console.log(`[webhook] Rewriting story for ${memberName}...`);
 
-      const previousStory = memory.getStory(phone) || '';
-      const allCalls = memory.getRecentCalls(phone, 50); // Get all calls
-      const callSummaries = allCalls.map(c => ({
-        date: c.date,
-        summary: c.summary || 'No summary.',
-      }));
-      const midCallNotes = memory.getNotes(phone);
+      const [previousStory, callSummaries, midCallNotes] = await Promise.all([
+        db.getStory(phone),
+        db.getRecentCalls(phone, 50),
+        Promise.resolve(db.getNotes(phone)),
+      ]);
 
-      const newStory = await rewriteStory(member, previousStory, callSummaries, midCallNotes);
-      memory.writeStory(phone, newStory);
+      const newStory = await rewriteStory(
+        member,
+        previousStory || '',
+        callSummaries.map(c => ({ date: c.date, summary: c.summary || 'No summary.' })),
+        midCallNotes
+      );
+
+      await db.writeStory(phone, newStory);
       console.log(`[webhook] Story rewritten for ${memberName} (${newStory.length} chars)`);
 
-      // Clear mid-call notes after processing
-      memory.clearNotes(phone);
+      db.clearNotes(phone);
     } catch (err) {
       console.error(`[webhook] Story rewrite failed:`, err.message);
     }
   }
 
-  // ── Step 4: Update index ──
-  const callCount = memory.getCallCount(phone);
-  memory.upsertMember(phone, {
+  // ── Step 4: Update member profile ──
+  const callCount = await db.getCallCount(phone);
+  await db.upsertMember(phone, {
     calls: callCount,
     lastCall: new Date().toISOString().slice(0, 10),
     lastOutcome: 'completed',
@@ -109,7 +107,6 @@ router.post('/conversation-end', async (req, res) => {
   console.log(`[webhook] Post-call pipeline complete for ${memberName} (${phone})`);
 });
 
-// Twilio call status (optional — for tracking)
 router.post('/call-status', (req, res) => {
   const { CallSid, CallStatus, To, Duration } = req.body;
   console.log(`[webhook/call-status] ${CallSid}: ${CallStatus} → ${To} (${Duration || 0}s)`);

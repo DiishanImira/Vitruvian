@@ -2,20 +2,19 @@
 
 /**
  * Server Tool Routes
- * 
+ *
  * These endpoints are called by ElevenLabs Conversational AI agent
  * during a live call. They must respond fast (<2 seconds).
  */
 
 const express = require('express');
 const router = express.Router();
-const memory = require('../services/memory');
+const db = require('../services/db');
 const twilio = require('twilio');
 
 // ─── get_member_context ───────────────────────────────────────────────────
-// Called at the start of every call. Returns everything the agent needs.
 
-router.post('/get-context', (req, res) => {
+router.post('/get-context', async (req, res) => {
   const { phone_number } = req.body;
 
   if (!phone_number) {
@@ -23,7 +22,7 @@ router.post('/get-context', (req, res) => {
   }
 
   console.log(`[tool/get-context] Looking up ${phone_number}`);
-  const context = memory.getFullContext(phone_number);
+  const context = await db.getFullContext(phone_number);
 
   if (context.known_member) {
     console.log(`[tool/get-context] Found: ${context.name} (${context.calls} calls)`);
@@ -35,7 +34,6 @@ router.post('/get-context', (req, res) => {
 });
 
 // ─── save_note ────────────────────────────────────────────────────────────
-// Mid-call: agent saves an observation for post-call story rewrite
 
 router.post('/save-note', (req, res) => {
   const { phone_number, note } = req.body;
@@ -45,13 +43,12 @@ router.post('/save-note', (req, res) => {
   }
 
   console.log(`[tool/save-note] ${phone_number}: "${note}"`);
-  memory.saveNote(phone_number, note);
+  db.saveNote(phone_number, note);
 
   res.json({ success: true });
 });
 
 // ─── log_mood ─────────────────────────────────────────────────────────────
-// Mid-call: agent records emotional state
 
 router.post('/log-mood', (req, res) => {
   const { phone_number, mood, context } = req.body;
@@ -61,15 +58,14 @@ router.post('/log-mood', (req, res) => {
   }
 
   console.log(`[tool/log-mood] ${phone_number}: ${mood} — ${context || ''}`);
-  memory.saveNote(phone_number, `MOOD: ${mood}${context ? ' — ' + context : ''}`);
+  db.saveNote(phone_number, `MOOD: ${mood}${context ? ' — ' + context : ''}`);
 
   res.json({ success: true });
 });
 
 // ─── update_progress ──────────────────────────────────────────────────────
-// Mid-call: member reports milestone (days clean, module progress)
 
-router.post('/update-progress', (req, res) => {
+router.post('/update-progress', async (req, res) => {
   const { phone_number, days_clean, current_module } = req.body;
 
   if (!phone_number) {
@@ -82,13 +78,12 @@ router.post('/update-progress', (req, res) => {
   if (days_clean !== undefined) updates.daysSober = days_clean;
   if (current_module !== undefined) updates.currentModule = current_module;
 
-  memory.upsertMember(phone_number, updates);
+  await db.upsertMember(phone_number, updates);
 
   res.json({ success: true, updated: updates });
 });
 
 // ─── send_sms ─────────────────────────────────────────────────────────────
-// Mid-call: send a resource via SMS
 
 router.post('/send-sms', async (req, res) => {
   const { phone_number, message } = req.body;
