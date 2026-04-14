@@ -43,9 +43,9 @@ function getSignedUrl(agentId, apiKey) {
 router.post('/voice', async (req, res) => {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
   const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
-  const callerNumber = req.body.From || 'unknown';
+  const from = req.body.From || 'unknown';
 
-  console.log(`[twilio/voice] Incoming call from ${callerNumber}`);
+  console.log(`[twilio/voice] Incoming call from ${from}`);
 
   if (!agentId) {
     console.error('[twilio/voice] ELEVENLABS_AGENT_ID not set!');
@@ -57,16 +57,76 @@ router.post('/voice', async (req, res) => {
     return;
   }
 
-  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
+  // 1. Look up member context BEFORE connecting to ElevenLabs
+  let firstMessage;
+  let contextOverride = '';
+
+  try {
+    const member = memory.getMember(from);
+    const story = memory.getStory(from);
+    const recentCalls = memory.getRecentCalls(from, 3);
+
+    if (member) {
+      // Known member — personalized greeting
+      const firstName = member.name ? member.name.split(' ')[0] : 'brother';
+      firstMessage = `Hey ${firstName}, good to hear from you.`;
+
+      // Build context block to prepend to system prompt
+      contextOverride = `\n\n═══════════════════════════════════════\nCALLER CONTEXT (loaded before call — use this immediately):\nName: ${member.name}\nPhone: ${from}\nDays clean: ${member.daysSober || 'unknown'}\nTotal calls: ${member.calls || 0}\n`;
+
+      if (story) {
+        contextOverride += `\nMEMBER STORY:\n${story}\n`;
+      }
+
+      if (recentCalls.length > 0) {
+        const summaries = recentCalls
+          .filter(c => c.summary)
+          .map(c => `- ${c.date}: ${c.summary}`)
+          .join('\n');
+        if (summaries) contextOverride += `\nRECENT CALLS:\n${summaries}\n`;
+      }
+
+      contextOverride += '═══════════════════════════════════════\n';
+      console.log(`[twilio/voice] Known member: ${member.name} — context injected`);
+    } else {
+      // Unknown caller — warm unknown greeting
+      firstMessage = "Hey, this is Jyasi. What's your name, brother?";
+      console.log(`[twilio/voice] Unknown caller: ${from}`);
+    }
+  } catch (err) {
+    console.error('[twilio/voice] Context lookup error:', err.message);
+    firstMessage = "Hey, this is Jyasi. What's your name, brother?";
+  }
+
+  // 2. Build conversation_config_override with pre-loaded context
+  const conversationConfig = {
+    agent: {
+      first_message: firstMessage,
+    }
+  };
+
+  // If we have member context, prepend it to the system prompt
+  if (contextOverride) {
+    conversationConfig.agent.prompt = {
+      prompt: contextOverride + SYSTEM_PROMPT
+    };
+  }
+
+  // 3. Encode for TwiML parameter
+  const clientData = JSON.stringify({
+    conversation_config_override: conversationConfig
+  });
 
   console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId}`);
 
+  // 4. Return TwiML with context injected via conversation_config_override parameter
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}">
-      <Parameter name="xi_api_key" value="${elevenLabsKey}" />
+    <Stream url="wss://api.elevenlabs.io/v1/convai/twilio">
+      <Parameter name="agent_id" value="${agentId}"/>
+      <Parameter name="conversation_config_override" value="${clientData.replace(/"/g, '&quot;')}"/>
     </Stream>
   </Connect>
 </Response>`);
