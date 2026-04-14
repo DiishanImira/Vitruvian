@@ -45,34 +45,37 @@ app.use('/webhooks', webhooksRouter);
 const twilioRouter = require('./routes/twilio');
 app.use('/webhook', twilioRouter);
 
-// ── Debug endpoints ──────────────────────────────────────────────────────────
+// ── Debug endpoints (non-production) ────────────────────────────────────────
 
-const db = require('./services/db');
+if (process.env.NODE_ENV !== 'production') {
+  const db = require('./services/db');
 
-app.get('/debug/members', async (req, res) => {
-  const members = await db.listMembers();
-  res.json(members);
-});
+  app.get('/debug/members', async (req, res) => {
+    const members = await db.listMembers();
+    res.json(members);
+  });
 
-app.get('/debug/story/:phone', async (req, res) => {
-  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
-  const story = await db.getStory(phone);
-  if (story) {
-    res.type('text/markdown').send(story);
-  } else {
-    res.status(404).json({ error: 'No story found for ' + phone });
-  }
-});
+  app.get('/debug/story/:phone', async (req, res) => {
+    const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+    const story = await db.getStory(phone);
+    if (story) {
+      res.type('text/markdown').send(story);
+    } else {
+      res.status(404).json({ error: 'No story found for ' + phone });
+    }
+  });
 
-app.get('/debug/calls/:phone', async (req, res) => {
-  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
-  const calls = await db.getRecentCalls(phone, 10);
-  res.json(calls);
-});
+  app.get('/debug/calls/:phone', async (req, res) => {
+    const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+    const calls = await db.getRecentCalls(phone, 10);
+    res.json(calls);
+  });
+}
 
 // ── Admin: delete a member and all their data ────────────────────────────────
 
 app.delete('/admin/delete-member/:phone', async (req, res) => {
+  const db = require('./services/db');
   const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
   const existing = await db.getMember(phone);
   await db.deleteMember(phone);
@@ -93,27 +96,35 @@ app.use((err, req, res, _next) => {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
+const db = require('./services/db');
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('');
-  console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║     Gyasi AI Coach — Vitruvian Man   ║');
-  console.log('  ║         Narrative Memory v2.0         ║');
-  console.log('  ╚══════════════════════════════════════╝');
-  console.log('');
-  console.log(`  🌐  Server:     http://localhost:${PORT}`);
-  console.log(`  📝  Signup:     http://localhost:${PORT}/signup.html`);
-  console.log(`  🔧  Tools:     POST /api/tools/*`);
-  console.log(`  📡  Webhooks:  POST /webhooks/*`);
-  console.log(`  📱  SMS:       POST /webhook/sms`);
-  console.log('');
+db.initDb()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('');
+      console.log('  ╔══════════════════════════════════════╗');
+      console.log('  ║     Gyasi AI Coach — Vitruvian Man   ║');
+      console.log('  ║         Narrative Memory v2.0         ║');
+      console.log('  ╚══════════════════════════════════════╝');
+      console.log('');
+      console.log(`  🌐  Server:     http://localhost:${PORT}`);
+      console.log(`  📝  Signup:     http://localhost:${PORT}/signup.html`);
+      console.log(`  🔧  Tools:     POST /api/tools/*`);
+      console.log(`  📡  Webhooks:  POST /webhooks/*`);
+      console.log(`  📱  SMS:       POST /webhook/sms`);
+      console.log('');
 
-  const required = ['ANTHROPIC_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
-  const missing = required.filter(k => !process.env[k]);
-  if (missing.length > 0) {
-    console.warn('  ⚠️  Missing env vars:', missing.join(', '));
-  }
-  console.log('');
-});
+      const required = ['ANTHROPIC_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
+      const missing = required.filter(k => !process.env[k]);
+      if (missing.length > 0) {
+        console.warn('  ⚠️  Missing env vars:', missing.join(', '));
+      }
+      console.log('');
+    });
+  })
+  .catch(err => {
+    console.error('[startup] DB init failed:', err.message);
+    process.exit(1);
+  });
 
 module.exports = app;

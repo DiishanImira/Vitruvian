@@ -2,12 +2,13 @@
 
 // Database Service — Four-Layer Memory Architecture
 //
-//   Layer 1: members         — profile + intake answers
+//   Layer 1: members         — profile + all 8 intake answers
 //   Layer 2: member_stories  — narrative memory (overwritten after each call)
 //   Layer 3: call_transcripts — raw verbatim transcripts per call
 //   Layer 4: call_summaries  — Claude-generated per-call summaries (timeline)
 //
-// Notes (transient mid-call scratchpad) remain file-based.
+// Notes (transient mid-call scratchpad) remain file-based and are cleared
+// after every call — no persistence needed.
 
 const { Pool } = require('pg');
 const fs = require('fs');
@@ -19,6 +20,84 @@ const pool = new Pool({
     ? false
     : { rejectUnauthorized: false },
 });
+
+// ─── Schema Bootstrap ─────────────────────────────────────────────────────
+// Called once on server startup. Creates tables if they don't exist.
+
+async function initDb() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS members (
+        phone           VARCHAR(20)  PRIMARY KEY,
+        name            VARCHAR(255) NOT NULL,
+        email           VARCHAR(255),
+        tier            VARCHAR(50)  DEFAULT 'foundation',
+        status          VARCHAR(50)  DEFAULT 'new',
+        signup_date     DATE,
+        total_calls     INTEGER      DEFAULT 0,
+        last_call       DATE,
+        last_outcome    VARCHAR(100),
+        days_sober      INTEGER      DEFAULT 0,
+        current_module  INTEGER      DEFAULT 0,
+        what_brought_you TEXT,
+        how_long        TEXT,
+        relationship    TEXT,
+        partner_knows   TEXT,
+        tried_before    TEXT,
+        urge_pattern    TEXT,
+        readiness       TEXT,
+        anything_else   TEXT,
+        created_at      TIMESTAMP    DEFAULT NOW(),
+        updated_at      TIMESTAMP    DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS member_stories (
+        phone      VARCHAR(20) PRIMARY KEY REFERENCES members(phone) ON DELETE CASCADE,
+        story      TEXT        NOT NULL,
+        updated_at TIMESTAMP   DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS call_transcripts (
+        id              SERIAL      PRIMARY KEY,
+        phone           VARCHAR(20) NOT NULL REFERENCES members(phone) ON DELETE CASCADE,
+        conversation_id VARCHAR(255),
+        call_date       DATE        NOT NULL,
+        started_at      TIMESTAMP,
+        duration_secs   INTEGER,
+        outcome         VARCHAR(100),
+        transcript      TEXT,
+        created_at      TIMESTAMP   DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS call_summaries (
+        id              SERIAL      PRIMARY KEY,
+        phone           VARCHAR(20) NOT NULL REFERENCES members(phone) ON DELETE CASCADE,
+        conversation_id VARCHAR(255),
+        call_date       DATE        NOT NULL,
+        summary         TEXT        NOT NULL,
+        created_at      TIMESTAMP   DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_call_transcripts_phone ON call_transcripts(phone);
+      CREATE INDEX IF NOT EXISTS idx_call_transcripts_date  ON call_transcripts(phone, call_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_call_summaries_phone   ON call_summaries(phone);
+      CREATE INDEX IF NOT EXISTS idx_call_summaries_date    ON call_summaries(phone, call_date DESC);
+    `);
+
+    console.log('[db] Schema ready');
+  } finally {
+    client.release();
+  }
+}
 
 // ─── Notes (file-based scratchpad — transient) ────────────────────────────
 
@@ -69,6 +148,16 @@ function rowToMember(row) {
     lastOutcome: row.last_outcome,
     daysSober: row.days_sober,
     currentModule: row.current_module,
+    intake: {
+      whatBroughtYou: row.what_brought_you,
+      howLong: row.how_long,
+      relationship: row.relationship,
+      partnerKnows: row.partner_knows,
+      triedBefore: row.tried_before,
+      urgePattern: row.urge_pattern,
+      readiness: row.readiness,
+      anythingElse: row.anything_else,
+    },
     updatedAt: row.updated_at,
   };
 }
@@ -82,39 +171,46 @@ async function getMember(phone) {
 
 async function upsertMember(phone, data) {
   const colMap = {
-    name: data.name,
-    email: data.email,
-    tier: data.tier,
-    status: data.status,
-    signup_date: data.signup,
-    total_calls: data.calls,
-    last_call: data.lastCall,
-    last_outcome: data.lastOutcome,
-    days_sober: data.daysSober,
-    current_module: data.currentModule,
+    name:             data.name,
+    email:            data.email,
+    tier:             data.tier,
+    status:           data.status,
+    signup_date:      data.signup,
+    total_calls:      data.calls,
+    last_call:        data.lastCall,
+    last_outcome:     data.lastOutcome,
+    days_sober:       data.daysSober,
+    current_module:   data.currentModule,
+    what_brought_you: data.whatBroughtYou,
+    how_long:         data.howLong,
+    relationship:     data.relationship,
+    partner_knows:    data.partnerKnows,
+    tried_before:     data.triedBefore,
+    urge_pattern:     data.urgePattern,
+    readiness:        data.readiness,
+    anything_else:    data.anythingElse,
   };
 
-  const cols = Object.keys(colMap).filter(k => colMap[k] !== undefined && colMap[k] !== null || k === 'name');
-  const insertCols = ['phone', ...cols.filter(k => colMap[k] !== undefined)];
-  const insertVals = [phone, ...cols.filter(k => colMap[k] !== undefined).map(k => colMap[k])];
-  const insertPlaceholders = insertVals.map((_, i) => `$${i + 1}`).join(', ');
-  const updateSet = cols
-    .filter(k => colMap[k] !== undefined)
-    .map((k, i) => `${k} = $${i + 2}`)
-    .join(', ');
-
-  if (insertCols.length === 1) {
+  const activeCols = Object.entries(colMap).filter(([, v]) => v !== undefined && v !== null);
+  if (activeCols.length === 0) {
     const { rows } = await pool.query('SELECT * FROM members WHERE phone = $1', [phone]);
     return rowToMember(rows[0] || null);
   }
 
-  const query = `
-    INSERT INTO members (${insertCols.join(', ')}, updated_at)
-    VALUES (${insertPlaceholders}, NOW())
-    ON CONFLICT (phone) DO UPDATE SET ${updateSet}, updated_at = NOW()
-    RETURNING *
-  `;
-  const { rows } = await pool.query(query, insertVals);
+  const colNames = activeCols.map(([k]) => k);
+  const colVals  = activeCols.map(([, v]) => v);
+
+  const insertCols  = ['phone', ...colNames].join(', ');
+  const insertPhs   = ['$1', ...colNames.map((_, i) => `$${i + 2}`)].join(', ');
+  const updateSet   = colNames.map((k, i) => `${k} = $${i + 2}`).join(', ');
+
+  const { rows } = await pool.query(
+    `INSERT INTO members (${insertCols}, updated_at)
+     VALUES (${insertPhs}, NOW())
+     ON CONFLICT (phone) DO UPDATE SET ${updateSet}, updated_at = NOW()
+     RETURNING *`,
+    [phone, ...colVals]
+  );
   return rowToMember(rows[0]);
 }
 
@@ -126,7 +222,20 @@ async function listMembers() {
 }
 
 async function deleteMember(phone) {
-  await pool.query('DELETE FROM members WHERE phone = $1', [phone]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM call_summaries  WHERE phone = $1', [phone]);
+    await client.query('DELETE FROM call_transcripts WHERE phone = $1', [phone]);
+    await client.query('DELETE FROM member_stories  WHERE phone = $1', [phone]);
+    await client.query('DELETE FROM members         WHERE phone = $1', [phone]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Layer 2: Member Stories ──────────────────────────────────────────────
@@ -235,6 +344,7 @@ async function getFullContext(phone) {
 }
 
 module.exports = {
+  initDb,
   getMember,
   upsertMember,
   listMembers,

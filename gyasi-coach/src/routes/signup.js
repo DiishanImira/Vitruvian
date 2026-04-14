@@ -49,6 +49,14 @@ router.post('/signup', async (req, res) => {
     daysSober: 0,
     currentModule: 0,
     status: 'new',
+    whatBroughtYou: whatBroughtYou || null,
+    howLong: howLong || null,
+    relationship: relationship || null,
+    partnerKnows: partnerKnows || null,
+    triedBefore: triedBefore || null,
+    urgePattern: urgePattern || null,
+    readiness: readiness || null,
+    anythingElse: anythingElse || null,
   });
 
   const intake = {
