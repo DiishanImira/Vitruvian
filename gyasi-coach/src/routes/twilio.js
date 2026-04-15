@@ -74,9 +74,7 @@ router.post('/voice', async (req, res) => {
   // Only pass first_message override — small enough for Twilio
   // Full context (story, hypotheses) lives in ElevenLabs agent prompt already
   const configOverride = JSON.stringify({
-    conversation_config_override: {
-      agent: { first_message: firstMessage }
-    }
+    agent: { first_message: firstMessage }
   });
 
   console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId} — first_message: "${firstMessage}"`);
