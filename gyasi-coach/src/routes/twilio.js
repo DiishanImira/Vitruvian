@@ -69,23 +69,14 @@ router.post('/voice', async (req, res) => {
     firstMessage = "Hey, this is Gyasi. What's your name, brother?";
   }
 
-  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
-
-  // Only pass first_message override — small enough for Twilio
-  // Full context (story, hypotheses) lives in ElevenLabs agent prompt already
-  const configOverride = JSON.stringify({
-    agent: { first_message: firstMessage }
-  });
-
   console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId} — first_message: "${firstMessage}"`);
 
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="${streamUrl}">
+    <Stream url="wss://api.elevenlabs.io/v1/convai/twilio">
       <Parameter name="agent_id" value="${agentId}"/>
-      <Parameter name="conversation_config_override" value="${configOverride.replace(/"/g, '&quot;')}"/>
     </Stream>
   </Connect>
 </Response>`);
