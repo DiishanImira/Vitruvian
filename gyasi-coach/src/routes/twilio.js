@@ -69,50 +69,17 @@ router.post('/voice', async (req, res) => {
     firstMessage = "Hey, this is Gyasi. What's your name, brother?";
   }
 
-  // Get a signed URL from ElevenLabs so we can pass context via WebSocket handshake
-  // rather than as a TwiML parameter (which has size limits)
-  let streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
+  const streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
 
-  try {
-    const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
-    if (elevenLabsKey && contextOverride) {
-      // Build the conversation config override
-      const conversationConfig = {
-        conversation_config_override: {
-          agent: {
-            first_message: firstMessage,
-            prompt: {
-              prompt: contextOverride + SYSTEM_PROMPT
-            }
-          }
-        }
-      };
-
-      // Get signed URL with context baked in
-      const signedUrlRes = await fetch(
-        `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
-        {
-          method: 'GET',
-          headers: { 'xi-api-key': elevenLabsKey }
-        }
-      );
-      const signedUrlData = await signedUrlRes.json();
-
-      if (signedUrlData.signed_url) {
-        // Encode context as URL param on the signed URL
-        const encodedConfig = encodeURIComponent(JSON.stringify(conversationConfig));
-        streamUrl = `${signedUrlData.signed_url}&conversation_initiation_client_data=${encodedConfig}`;
-        console.log('[twilio/voice] Using signed URL with context');
-      }
+  // Only pass first_message override — small enough for Twilio
+  // Full context (story, hypotheses) lives in ElevenLabs agent prompt already
+  const configOverride = JSON.stringify({
+    conversation_config_override: {
+      agent: { first_message: firstMessage }
     }
-  } catch (err) {
-    console.error('[twilio/voice] Signed URL error, falling back to basic:', err.message);
-    // Fall back to basic connection — at least the call works
-    streamUrl = `wss://api.elevenlabs.io/v1/convai/twilio?agent_id=${agentId}`;
-    firstMessage = firstMessage; // keep personalized first_message at minimum
-  }
+  });
 
-  console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId}`);
+  console.log(`[twilio/voice] Connecting to ElevenLabs agent: ${agentId} — first_message: "${firstMessage}"`);
 
   res.type('text/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -120,6 +87,7 @@ router.post('/voice', async (req, res) => {
   <Connect>
     <Stream url="${streamUrl}">
       <Parameter name="agent_id" value="${agentId}"/>
+      <Parameter name="conversation_config_override" value="${configOverride.replace(/"/g, '&quot;')}"/>
     </Stream>
   </Connect>
 </Response>`);
