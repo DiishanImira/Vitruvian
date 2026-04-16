@@ -121,6 +121,21 @@ router.post('/convai-init', async (req, res) => {
   });
 });
 
+// ElevenLabs sends the transcript as an array of {role, message, ...} objects.
+// Convert to readable dialogue so Claude receives actual text, not "[object Object]".
+function formatTranscript(arr) {
+  if (typeof arr === 'string') return arr;
+  if (!Array.isArray(arr)) return '';
+  return arr
+    .map(t => {
+      const role = (t.role || '').toLowerCase() === 'agent' ? 'Gyasi' : 'Member';
+      const msg = (t.message || '').trim();
+      return msg ? `${role}: ${msg}` : null;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 router.post('/conversation-end', async (req, res) => {
   // ElevenLabs' current webhook format wraps payload under `data`.
   // Support both nested and legacy flat structure.
@@ -131,7 +146,7 @@ router.post('/conversation-end', async (req, res) => {
   const call_duration_secs =
     payload.call_duration_secs
     ?? payload.metadata?.call_duration_secs;
-  const transcript      = payload.transcript;
+  const transcript      = formatTranscript(payload.transcript);
   const initData        = payload.conversation_initiation_client_data || {};
   const dynamic_variables = initData.dynamic_variables || payload.dynamic_variables || {};
 
