@@ -122,22 +122,29 @@ router.post('/convai-init', async (req, res) => {
 });
 
 router.post('/conversation-end', async (req, res) => {
-  const {
-    conversation_id,
-    agent_id,
-    call_duration_secs,
-    transcript,
-    dynamic_variables,
-  } = req.body;
+  // ElevenLabs' current webhook format wraps payload under `data`.
+  // Support both nested and legacy flat structure.
+  const payload = req.body.data || req.body;
+
+  const conversation_id = payload.conversation_id;
+  const agent_id        = payload.agent_id;
+  const call_duration_secs =
+    payload.call_duration_secs
+    ?? payload.metadata?.call_duration_secs;
+  const transcript      = payload.transcript;
+  const initData        = payload.conversation_initiation_client_data || {};
+  const dynamic_variables = initData.dynamic_variables || payload.dynamic_variables || {};
 
   res.json({ received: true });
 
-  const phone = dynamic_variables?.phone_number
-    || dynamic_variables?.system__caller_id
-    || req.body.caller_id;
+  const phone =
+    payload.metadata?.phone_call?.external_number
+    || dynamic_variables.system__caller_id
+    || dynamic_variables.phone_number
+    || payload.caller_id;
 
   if (!phone) {
-    console.error('[webhook/conversation-end] No phone number found in payload');
+    console.error('[webhook/conversation-end] No phone number found in payload — keys:', Object.keys(payload));
     return;
   }
 
