@@ -251,9 +251,12 @@ async function processConversationEnd({
     try {
       console.log(`[webhook] Rewriting story for ${memberName}...`);
 
+      // Rewrite input: previous story carries the long-term synthesis; only
+      // the most recent 3 summaries add recency detail. Older specific moments
+      // stay in the archive, reachable mid-call via search_call_history.
       const [previousStory, callSummaries, midCallNotes] = await Promise.all([
         db.getStory(phone),
-        db.getRecentCalls(phone, 50),
+        db.getRecentCalls(phone, 3),
         Promise.resolve(db.getNotes(phone)),
       ]);
 
