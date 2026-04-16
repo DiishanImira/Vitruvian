@@ -136,6 +136,10 @@ function formatTranscript(arr) {
     .join('\n');
 }
 
+// In-flight guard — handles concurrent duplicate webhook fires from the same
+// process. Falls back to the DB check for retries across processes/restarts.
+const inFlightConversations = new Set();
+
 router.post('/conversation-end', async (req, res) => {
   // ElevenLabs' current webhook format wraps payload under `data`.
   // Support both nested and legacy flat structure.
@@ -150,8 +154,50 @@ router.post('/conversation-end', async (req, res) => {
   const initData        = payload.conversation_initiation_client_data || {};
   const dynamic_variables = initData.dynamic_variables || payload.dynamic_variables || {};
 
+  // Always respond fast so ElevenLabs doesn't retry on timeout.
   res.json({ received: true });
 
+  if (!conversation_id) {
+    console.error('[webhook/conversation-end] Missing conversation_id — skipping');
+    return;
+  }
+
+  // Guard 1: concurrent duplicate fire in this process
+  if (inFlightConversations.has(conversation_id)) {
+    console.log(`[webhook/conversation-end] ${conversation_id} already in-flight — skipping`);
+    return;
+  }
+
+  // Guard 2: already processed and persisted (retries after restart, etc.)
+  if (await db.callAlreadyProcessed(conversation_id)) {
+    console.log(`[webhook/conversation-end] ${conversation_id} already in DB — skipping`);
+    return;
+  }
+
+  inFlightConversations.add(conversation_id);
+
+  try {
+    await processConversationEnd({
+      conversation_id,
+      agent_id,
+      call_duration_secs,
+      transcript,
+      dynamic_variables,
+      payload,
+    });
+  } finally {
+    inFlightConversations.delete(conversation_id);
+  }
+});
+
+async function processConversationEnd({
+  conversation_id,
+  agent_id,
+  call_duration_secs,
+  transcript,
+  dynamic_variables,
+  payload,
+}) {
   const phone =
     payload.metadata?.phone_call?.external_number
     || dynamic_variables.system__caller_id
@@ -237,7 +283,7 @@ router.post('/conversation-end', async (req, res) => {
   });
 
   console.log(`[webhook] Post-call pipeline complete for ${memberName} (${phone})`);
-});
+}
 
 router.post('/call-status', (req, res) => {
   const { CallSid, CallStatus, To, Duration } = req.body;

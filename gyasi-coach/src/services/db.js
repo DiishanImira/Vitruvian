@@ -137,6 +137,15 @@ function saveNote(phone, note) {
     .catch(err => console.error('[db.saveNote] DB insert failed:', err.message));
 }
 
+async function callAlreadyProcessed(conversation_id) {
+  if (!conversation_id) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM call_transcripts WHERE conversation_id = $1 LIMIT 1',
+    [conversation_id]
+  );
+  return rows.length > 0;
+}
+
 async function listAllNotes(phone, limit = 100) {
   const { rows } = await pool.query(
     `SELECT id, note_text, created_at
@@ -452,5 +461,6 @@ module.exports = {
   getNotes,
   clearNotes,
   listAllNotes,
+  callAlreadyProcessed,
   getFullContext,
 };
