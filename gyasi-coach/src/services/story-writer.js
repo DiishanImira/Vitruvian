@@ -181,8 +181,12 @@ async function generateInitialStory(member, intake) {
 // Kept for backward compatibility. New code should use rewriteStoryAfterCall().
 
 async function rewriteStory(member, previousStory, callSummaries, midCallNotes) {
+  // callSummaries arrives DESC (newest first). Label each with its actual
+  // call number so the rewriter doesn't re-index 4→1 when only 3 summaries
+  // are passed. totalCalls must reflect the *just-saved* call.
+  const totalCalls = member.calls || callSummaries.length;
   const callSummaryText = callSummaries.map((c, i) =>
-    `Call ${i + 1} (${c.date}): ${c.summary}`
+    `Call ${totalCalls - i} (${c.date}): ${c.summary}`
   ).join('\n\n');
 
   const notesText = midCallNotes.length > 0
@@ -191,11 +195,10 @@ async function rewriteStory(member, previousStory, callSummaries, midCallNotes) 
 
   const transcript = `${callSummaryText}${notesText}`;
   const callDate = callSummaries.length > 0
-    ? callSummaries[callSummaries.length - 1].date
+    ? callSummaries[0].date  // newest summary is the current call
     : new Date().toISOString().slice(0, 10);
-  const callCount = member.calls || callSummaries.length;
 
-  return rewriteStoryAfterCall(previousStory, transcript, callDate, callCount);
+  return rewriteStoryAfterCall(previousStory, transcript, callDate, totalCalls);
 }
 
 // ─── Summarize Transcript ─────────────────────────────────────────────────

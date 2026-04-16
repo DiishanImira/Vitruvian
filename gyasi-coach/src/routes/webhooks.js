@@ -254,14 +254,16 @@ async function processConversationEnd({
       // Rewrite input: previous story carries the long-term synthesis; only
       // the most recent 3 summaries add recency detail. Older specific moments
       // stay in the archive, reachable mid-call via search_call_history.
-      const [previousStory, callSummaries, midCallNotes] = await Promise.all([
+      // callCountNow reflects the just-saved call so story labels are accurate.
+      const [previousStory, callSummaries, midCallNotes, callCountNow] = await Promise.all([
         db.getStory(phone),
         db.getRecentCalls(phone, 3),
         Promise.resolve(db.getNotes(phone)),
+        db.getCallCount(phone),
       ]);
 
       const newStory = await rewriteStory(
-        member,
+        { ...member, calls: callCountNow },
         previousStory || '',
         callSummaries.map(c => ({ date: c.date, summary: c.summary || 'No summary.' })),
         midCallNotes
