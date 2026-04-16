@@ -70,6 +70,12 @@ if (process.env.NODE_ENV !== 'production') {
     const calls = await db.getRecentCalls(phone, 10);
     res.json(calls);
   });
+
+  app.get('/debug/notes/:phone', async (req, res) => {
+    const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
+    const notes = await db.listAllNotes(phone, 200);
+    res.json(notes);
+  });
 }
 
 // ── Admin: delete a member and all their data ────────────────────────────────

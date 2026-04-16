@@ -151,7 +151,7 @@ ${transcript}
 CALL DATE: ${callDate}
 TOTAL CALLS TO DATE: ${callCount}`;
 
-  return callClaude(systemPrompt, userMessage, 2000);
+  return callClaude(systemPrompt, userMessage, 16000);
 }
 
 // ─── Legacy: Generate Initial Story (from intake) ─────────────────────────
@@ -245,7 +245,7 @@ Be specific. Use the member's actual words where possible. This is the primary i
 
   const userMessage = `Member: ${memberName}\n\nTranscript:\n${transcript}`;
 
-  return callClaude(systemPrompt, userMessage, 1500);
+  return callClaude(systemPrompt, userMessage, 8000);
 }
 
 module.exports = {

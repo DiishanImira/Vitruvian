@@ -87,10 +87,20 @@ async function initDb() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS call_notes (
+        id          SERIAL      PRIMARY KEY,
+        phone       VARCHAR(20) NOT NULL REFERENCES members(phone) ON DELETE CASCADE,
+        note_text   TEXT        NOT NULL,
+        created_at  TIMESTAMP   DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_call_transcripts_phone ON call_transcripts(phone);
       CREATE INDEX IF NOT EXISTS idx_call_transcripts_date  ON call_transcripts(phone, call_date DESC);
       CREATE INDEX IF NOT EXISTS idx_call_summaries_phone   ON call_summaries(phone);
       CREATE INDEX IF NOT EXISTS idx_call_summaries_date    ON call_summaries(phone, call_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_call_notes_phone_time  ON call_notes(phone, created_at DESC);
     `);
 
     console.log('[db] Schema ready');
@@ -112,6 +122,7 @@ function notesPath(phone) {
 }
 
 function saveNote(phone, note) {
+  // File write — transient scratchpad, cleared after each call's rewrite.
   const p = notesPath(phone);
   let notes = [];
   if (fs.existsSync(p)) {
@@ -119,6 +130,27 @@ function saveNote(phone, note) {
   }
   notes.push({ note, ts: new Date().toISOString() });
   fs.writeFileSync(p, JSON.stringify(notes, null, 2));
+
+  // DB write — permanent audit trail, not cleared.
+  pool
+    .query('INSERT INTO call_notes (phone, note_text) VALUES ($1, $2)', [phone, note])
+    .catch(err => console.error('[db.saveNote] DB insert failed:', err.message));
+}
+
+async function listAllNotes(phone, limit = 100) {
+  const { rows } = await pool.query(
+    `SELECT id, note_text, created_at
+     FROM call_notes
+     WHERE phone = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [phone, limit]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    note: r.note_text,
+    created_at: r.created_at,
+  }));
 }
 
 function getNotes(phone) {
@@ -419,5 +451,6 @@ module.exports = {
   saveNote,
   getNotes,
   clearNotes,
+  listAllNotes,
   getFullContext,
 };
