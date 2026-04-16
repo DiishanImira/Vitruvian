@@ -3,18 +3,123 @@
 /**
  * Webhook Routes
  *
- * POST /webhooks/conversation-end — ElevenLabs fires this after every call.
- * Triggers the full post-call pipeline:
- *   1. Save transcript to call_transcripts
- *   2. Generate summary → save to call_summaries
- *   3. Rewrite member story
- *   4. Update member profile
+ * POST /webhooks/convai-init — ElevenLabs fires this BEFORE every call.
+ *   Returns { conversation_config_override, dynamic_variables } so Gyasi
+ *   greets the caller by name with context already in mind.
+ *
+ * POST /webhooks/conversation-end — ElevenLabs fires this AFTER every call.
+ *   Triggers the full post-call pipeline:
+ *     1. Save transcript to call_transcripts
+ *     2. Generate summary → save to call_summaries
+ *     3. Rewrite member story
+ *     4. Update member profile
  */
 
 const express = require('express');
 const router = express.Router();
 const db = require('../services/db');
 const { summarizeTranscript, rewriteStory } = require('../services/story-writer');
+
+// ── Pool of open-ended greeting openers for varied, natural first lines ─────
+const OPENERS = [
+  "how's it going?",
+  "how you doing, man?",
+  "what's up, brother?",
+  "how you holding up?",
+  "good to hear your voice — what's going on?",
+  "what's on your mind today?",
+  "how's your day been?",
+  "what's happening?",
+  "how you been?",
+  "what's good?",
+];
+const pickOpener = () => OPENERS[Math.floor(Math.random() * OPENERS.length)];
+
+// ── Auth helper — verify ElevenLabs is calling us, not a random caller ──────
+function verifyWebhookAuth(req) {
+  const expected = process.env.CONVAI_WEBHOOK_SECRET;
+  if (!expected) return true; // if not configured, allow (dev mode)
+  const header = req.headers.authorization || '';
+  return header === `Bearer ${expected}`;
+}
+
+// ── POST /webhooks/convai-init — caller-specific initialization ─────────────
+// ElevenLabs calls this before connecting each inbound call.
+// Returns the first_message Gyasi will speak + dynamic vars his prompt uses.
+router.post('/convai-init', async (req, res) => {
+  if (!verifyWebhookAuth(req)) {
+    console.warn('[convai-init] Unauthorized request');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const callerPhone =
+    req.body.caller_id ||
+    req.body.system__caller_id ||
+    req.body.dynamic_variables?.system__caller_id;
+
+  console.log(`[convai-init] Call starting from ${callerPhone || 'unknown'}`);
+
+  // Fallback defaults for unknown / error case — safe for the prompt.
+  const dyn = {
+    member_name: 'brother',
+    member_first_name: 'brother',
+    member_story: 'First-time caller — no story yet. Run gentle intake: what brought them here, how long, what they have tried. Don\'t interrogate.',
+    days_sober: 0,
+    total_calls: 0,
+    tier: 'foundation',
+    recent_calls: 'No prior calls.',
+    caller_status: 'unknown',
+  };
+
+  let firstMessage = "Hey, this is Jyasi — who am I talking to?";
+
+  if (callerPhone) {
+    try {
+      const [member, story, recentCalls] = await Promise.all([
+        db.getMember(callerPhone),
+        db.getStory(callerPhone),
+        db.getRecentCalls(callerPhone, 3),
+      ]);
+
+      if (member) {
+        const firstName = (member.name || '').split(' ')[0] || 'brother';
+        dyn.member_name = member.name || firstName;
+        dyn.member_first_name = firstName;
+        dyn.days_sober = member.daysSober || 0;
+        dyn.total_calls = member.calls || 0;
+        dyn.tier = member.tier || 'foundation';
+        dyn.member_story = story || dyn.member_story;
+        const summaries = recentCalls
+          .filter(c => c.summary)
+          .map(c => `- ${c.date}: ${c.summary}`)
+          .join('\n');
+        if (summaries) dyn.recent_calls = summaries;
+
+        if ((member.calls || 0) === 0) {
+          dyn.caller_status = 'first_call';
+          firstMessage = `Hey ${firstName}, Jyasi here — glad you called.`;
+        } else {
+          dyn.caller_status = 'returning';
+          firstMessage = `Hey ${firstName}, ${pickOpener()}`;
+        }
+        console.log(`[convai-init] Known member: ${member.name} (${member.calls || 0} prior calls)`);
+      } else {
+        console.log(`[convai-init] Unknown caller: ${callerPhone}`);
+      }
+    } catch (err) {
+      console.error('[convai-init] Lookup error:', err.message);
+      // fall through with defaults
+    }
+  }
+
+  res.json({
+    type: 'conversation_initiation_client_data',
+    conversation_config_override: {
+      agent: { first_message: firstMessage },
+    },
+    dynamic_variables: dyn,
+  });
+});
 
 router.post('/conversation-end', async (req, res) => {
   const {
