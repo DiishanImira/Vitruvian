@@ -3,9 +3,9 @@
 /**
  * SalesMessage outbound client.
  *
- * POST https://api.salesmessage.com/pub/v2.2/conversations/{id}/send
+ * POST https://api.salesmessage.com/pub/v2.2/messages/{conversation_id}
  * Header: Authorization: Bearer <PAT>
- * Body:   { body: "message text" }
+ * Body:   { message: "text to send" }
  *
  * The conversation_id is handed to us on inbound webhook payloads
  * (data.message.conversation_id), so no contact lookup is needed.
@@ -52,12 +52,12 @@ function postJson(pathname, token, body) {
   });
 }
 
-async function sendMessageToConversation(conversationId, body) {
+async function sendMessageToConversation(conversationId, text) {
   const token = process.env.SALESMESSAGE_PAT;
   if (!token) throw new Error('SALESMESSAGE_PAT not set');
   if (!conversationId) throw new Error('conversation_id required');
-  if (!body) throw new Error('body required');
-  return postJson(`${BASE_PATH}/conversations/${conversationId}/send`, token, { body });
+  if (!text) throw new Error('message required');
+  return postJson(`${BASE_PATH}/messages/${conversationId}`, token, { message: text });
 }
 
 module.exports = { sendMessageToConversation };
