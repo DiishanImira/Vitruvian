@@ -2,9 +2,12 @@
 
 require('dotenv').config();
 
+// Must be required before any console.log calls so the buffer captures everything
+require('./services/log-buffer');
+
 const express = require('express');
-const path = require('path');
-const app = express();
+const path    = require('path');
+const app     = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -23,17 +26,18 @@ app.get('/api/health', (req, res) => {
     service: 'Gyasi AI Coach — Vitruvian Man',
     version: '2.0.0',
     endpoints: {
-      signup: 'GET /signup.html | POST /api/signup',
-      tools: 'POST /api/tools/*',
+      signup:   'GET /signup.html | POST /api/signup',
+      tools:    'POST /api/tools/*',
       webhooks: 'POST /webhooks/*',
-      sms: 'POST /webhook/sms',
+      sms:      'POST /webhook/sms',
+      admin:    'GET|DELETE /admin/* (Bearer token required)',
     },
   });
 });
 
 app.get('/', (req, res) => res.redirect('/signup.html'));
 
-const signupRouter = require('./routes/signup');
+const signupRouter  = require('./routes/signup');
 app.use('/api', signupRouter);
 
 const toolsRouter = require('./routes/tools');
@@ -45,7 +49,10 @@ app.use('/webhooks', webhooksRouter);
 const twilioRouter = require('./routes/twilio');
 app.use('/webhook', twilioRouter);
 
-// ── Debug endpoints (non-production) ────────────────────────────────────────
+const adminRouter = require('./routes/admin');
+app.use('/admin', adminRouter);
+
+// ── Debug endpoints (non-production only) ────────────────────────────────────
 
 if (process.env.NODE_ENV !== 'production') {
   const db = require('./services/db');
@@ -78,18 +85,6 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// ── Admin: delete a member and all their data ────────────────────────────────
-
-app.delete('/admin/delete-member/:phone', async (req, res) => {
-  const db = require('./services/db');
-  const phone = '+' + req.params.phone.replace(/[^0-9]/g, '');
-  const existing = await db.getMember(phone);
-  await db.deleteMember(phone);
-  db.clearNotes(phone);
-  console.log(`[admin] Deleted all data for ${phone}`);
-  res.json({ success: true, phone, existed: !!existing });
-});
-
 // ── Error handlers ───────────────────────────────────────────────────────────
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
@@ -102,7 +97,7 @@ app.use((err, req, res, _next) => {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
-const db = require('./services/db');
+const db   = require('./services/db');
 
 db.initDb()
   .then(() => {
@@ -118,10 +113,11 @@ db.initDb()
       console.log(`  🔧  Tools:     POST /api/tools/*`);
       console.log(`  📡  Webhooks:  POST /webhooks/*`);
       console.log(`  📱  SMS:       POST /webhook/sms`);
+      console.log(`  🔐  Admin:     GET|DELETE /admin/* (ADMIN_API_KEY required)`);
       console.log('');
 
-      const required = ['ANTHROPIC_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER'];
-      const missing = required.filter(k => !process.env[k]);
+      const required = ['ANTHROPIC_API_KEY', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER', 'ADMIN_API_KEY'];
+      const missing  = required.filter(k => !process.env[k]);
       if (missing.length > 0) {
         console.warn('  ⚠️  Missing env vars:', missing.join(', '));
       }

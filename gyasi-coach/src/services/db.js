@@ -418,6 +418,46 @@ async function getCallCount(phone) {
   return parseInt(rows[0]?.count || '0', 10);
 }
 
+// ─── Admin helpers ────────────────────────────────────────────────────────
+
+async function getLatestTranscript(phone) {
+  const { rows } = await pool.query(
+    `SELECT id, conversation_id, call_date, started_at, duration_secs, outcome, transcript
+     FROM call_transcripts
+     WHERE phone = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [phone]
+  );
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    id:              r.id,
+    conversation_id: r.conversation_id,
+    date:            r.call_date ? new Date(r.call_date).toISOString().slice(0, 10) : null,
+    started_at:      r.started_at,
+    duration_secs:   r.duration_secs,
+    outcome:         r.outcome,
+    transcript:      r.transcript,
+  };
+}
+
+async function getAdminStats() {
+  const [members, callsToday, activeWeek, totalCalls] = await Promise.all([
+    pool.query('SELECT COUNT(*) AS count FROM members'),
+    pool.query("SELECT COUNT(*) AS count FROM call_transcripts WHERE call_date = CURRENT_DATE"),
+    pool.query("SELECT COUNT(DISTINCT phone) AS count FROM call_transcripts WHERE call_date >= CURRENT_DATE - INTERVAL '7 days'"),
+    pool.query('SELECT COUNT(*) AS count FROM call_transcripts'),
+  ]);
+  return {
+    totalMembers:        parseInt(members.rows[0].count, 10),
+    totalCalls:          parseInt(totalCalls.rows[0].count, 10),
+    callsToday:          parseInt(callsToday.rows[0].count, 10),
+    activeLastSevenDays: parseInt(activeWeek.rows[0].count, 10),
+    asOf:                new Date().toISOString(),
+  };
+}
+
 // ─── Full Context ─────────────────────────────────────────────────────────
 
 async function getFullContext(phone) {
@@ -457,6 +497,8 @@ module.exports = {
   getRecentCalls,
   searchCallHistory,
   getCallCount,
+  getLatestTranscript,
+  getAdminStats,
   saveNote,
   getNotes,
   clearNotes,
