@@ -234,8 +234,9 @@ async function processConversationEnd({
   if (transcript) {
     try {
       console.log(`[webhook] Generating summary for ${memberName}...`);
-      callData.summary = await summarizeTranscript(transcript, memberName);
-      console.log(`[webhook] Summary generated (${callData.summary.length} chars)`);
+      const priorSummaries = await db.getRecentCalls(phone, 5);
+      callData.summary = await summarizeTranscript(transcript, memberName, callData.date, priorSummaries);
+      console.log(`[webhook] Summary generated (${callData.summary.length} chars, ${priorSummaries.length} prior calls in context)`);
     } catch (err) {
       console.error(`[webhook] Summary generation failed:`, err.message);
       callData.summary = `Call on ${callData.date}. Duration: ${call_duration_secs}s. Summary generation failed.`;

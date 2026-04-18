@@ -203,12 +203,21 @@ async function rewriteStory(member, previousStory, callSummaries, midCallNotes) 
 
 // ─── Summarize Transcript ─────────────────────────────────────────────────
 
-async function summarizeTranscript(transcript, memberName, callDate) {
+async function summarizeTranscript(transcript, memberName, callDate, priorSummaries) {
   const dateLabel = callDate || new Date().toISOString().slice(0, 10);
+
+  const priorBlock = Array.isArray(priorSummaries) && priorSummaries.length
+    ? priorSummaries
+        .filter(c => c && c.summary)
+        .map(c => `--- ${c.date} ---\n${c.summary}`)
+        .join('\n\n')
+    : '';
 
   const systemPrompt = `You are analyzing a coaching call from the Vitruvian Man program (porn addiction recovery). The coach is Gyasi.
 
 Produce a structured call summary. This summary will be stored and used to rewrite the member's narrative story — specifically to update the Meaningful Themes section and Next Call Guidance. Make it rich, specific, and useful to a reader who wasn't on the call.
+
+You have access to this member's PRIOR CALL SUMMARIES below (most recent last). Use them to ground the "Connections Made" and "Themes That Came Up" sections — flag themes as RECURRING when they appeared before, NEW when they didn't, and call out specific echoes, contradictions, or escalations versus earlier calls. Do not treat this as a first call unless the prior-summaries block is empty.
 
 FORMAT:
 ---
@@ -246,7 +255,9 @@ Examples:
 
 Be specific. Use the member's actual words where possible. This is the primary input to the story rewrite — make it count.`;
 
-  const userMessage = `Member: ${memberName}\n\nTranscript:\n${transcript}`;
+  const userMessage = priorBlock
+    ? `Member: ${memberName}\n\nPRIOR CALL SUMMARIES:\n${priorBlock}\n\nCURRENT CALL TRANSCRIPT:\n${transcript}`
+    : `Member: ${memberName}\n\nPRIOR CALL SUMMARIES: (none — this is an early call)\n\nCURRENT CALL TRANSCRIPT:\n${transcript}`;
 
   return callClaude(systemPrompt, userMessage, 8000);
 }
