@@ -1,6 +1,6 @@
 'use strict';
 
-const MAX_LINES = 500;
+const MAX_LINES = 200;
 const buffer = [];
 
 function push(level, args) {

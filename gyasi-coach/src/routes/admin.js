@@ -97,7 +97,8 @@ router.get('/member/:phone/story', async (req, res) => {
 
 router.get('/member/:phone/calls', async (req, res) => {
   const phone = normalizePhone(req.params.phone);
-  const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20, 50);
   try {
     const calls = await db.getRecentCalls(phone, limit);
     res.json({ phone, count: calls.length, calls });
@@ -136,7 +137,8 @@ router.get('/stats', async (req, res) => {
 // ── GET /admin/logs ───────────────────────────────────────────────────────
 
 router.get('/logs', (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit || '200', 10), 500);
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 200, 200);
   const lines = getLogBuffer(limit);
   res.json({ count: lines.length, logs: lines });
 });
