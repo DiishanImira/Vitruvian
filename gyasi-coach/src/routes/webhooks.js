@@ -24,6 +24,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/db');
 const { summarizeTranscript, rewriteStory, callClaudeChat } = require('../services/story-writer');
+const { sendMessageToConversation } = require('../services/salesmessage');
 const fs = require('fs');
 const path = require('path');
 
@@ -422,14 +423,36 @@ router.post('/salesmessage/inbound', async (req, res) => {
       return;
     }
 
-    // 5. Persist draft (log-only mode — not sent to SalesMessage yet)
-    await db.saveSmsMessage(phone, {
+    // 5. Persist draft, then send via SalesMessage.
+    const draftRow = await db.saveSmsMessage(phone, {
       direction: 'out',
       body: draft,
       status: 'draft',
       sm_conversation_id: msg.conversation_id ? String(msg.conversation_id) : null,
     });
-    console.log(`[sms-inbound] Draft reply for ${phone} (${draft.length} chars, log-only): ${draft}`);
+    console.log(`[sms-inbound] Draft generated for ${phone} (${draft.length} chars): ${draft}`);
+
+    if (!msg.conversation_id) {
+      console.warn('[sms-inbound] No conversation_id on inbound — cannot send outbound');
+      return;
+    }
+
+    try {
+      const resp = await sendMessageToConversation(msg.conversation_id, draft);
+      const outId = resp?.body?.data?.id ?? resp?.body?.id ?? null;
+      if (draftRow?.id) {
+        await db.updateSmsMessage(draftRow.id, {
+          status: 'sent',
+          sm_message_id: outId ? String(outId) : undefined,
+        });
+      }
+      console.log(`[sms-inbound] Sent to SalesMessage (sm_id=${outId || 'unknown'})`);
+    } catch (err) {
+      console.error('[sms-inbound] SalesMessage send failed:', err.message);
+      if (draftRow?.id) {
+        await db.updateSmsMessage(draftRow.id, { status: 'failed' });
+      }
+    }
   } catch (err) {
     console.error('[sms-inbound] Handler error:', err.message, err.stack);
   }

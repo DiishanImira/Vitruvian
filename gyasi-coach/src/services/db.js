@@ -537,6 +537,19 @@ async function saveSmsMessage(phone, { direction, body, status, sm_message_id, s
   return rows[0] || null;
 }
 
+async function updateSmsMessage(id, { status, sm_message_id }) {
+  const sets = [];
+  const vals = [];
+  if (status) { sets.push(`status = $${sets.length + 2}`); vals.push(status); }
+  if (sm_message_id) { sets.push(`sm_message_id = $${sets.length + 2}`); vals.push(sm_message_id); }
+  if (sets.length === 0) return null;
+  const { rows } = await pool.query(
+    `UPDATE sms_messages SET ${sets.join(', ')} WHERE id = $1 RETURNING id, status, sm_message_id`,
+    [id, ...vals]
+  );
+  return rows[0] || null;
+}
+
 async function getRecentSmsMessages(phone, limit = 20) {
   const { rows } = await pool.query(
     `SELECT id, direction, status, body, created_at
@@ -670,6 +683,7 @@ module.exports = {
   callAlreadyProcessed,
   getFullContext,
   saveSmsMessage,
+  updateSmsMessage,
   getRecentSmsMessages,
   findPhonesWithStaleUnrolledSms,
   getUnrolledSmsMessages,
