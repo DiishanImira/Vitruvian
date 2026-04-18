@@ -60,6 +60,58 @@ function composeQuickGreeting(member, firstName) {
   return `Hey ${firstName}, ${opener}`;
 }
 
+// Build the fully-rendered SMS system prompt for a given phone/member. Used by
+// both the turn-2+ handler and the turn-1 cache-priming background call, so
+// the cache key (system block) is byte-identical across them.
+async function buildSmsSystemPrompt(phone, member) {
+  const [story, mergedTimeline] = await Promise.all([
+    member ? db.getStory(phone) : Promise.resolve(null),
+    member ? db.getMergedMemoryTimeline(phone, 5) : Promise.resolve([]),
+  ]);
+
+  const firstName = (member?.name || '').split(' ')[0] || 'brother';
+  const callerStatus = !member
+    ? 'unknown'
+    : (member.calls || 0) === 0
+      ? 'first_call'
+      : 'returning';
+
+  const recentCallsText = mergedTimeline
+    .map(e => {
+      const label = e.type === 'sms' ? `SMS (${e.date})` : `Call (${e.date})`;
+      return `- ${label}: ${e.summary}`;
+    })
+    .join('\n') || 'No prior calls or sessions.';
+
+  return renderPrompt(SMS_PROMPT_TEMPLATE, {
+    member_name:       member?.name?.trim() || firstName,
+    member_first_name: firstName,
+    days_sober:        member?.daysSober ?? 0,
+    total_calls:       member?.calls ?? 0,
+    tier:              member?.tier || 'foundation',
+    caller_status:     callerStatus,
+    member_story:      story || (member
+      ? 'No story yet — this is an early contact.'
+      : 'Unknown number. No prior context.'),
+    recent_calls:      recentCallsText,
+  });
+}
+
+// Fire-and-forget cache warmer. Renders the SMS system prompt (same way the
+// real turn-2 handler will) and makes a 1-token Claude call to plant the
+// cache_control: ephemeral block in Anthropic's cache. Next real call with
+// byte-identical system will hit the cache and skip the big prefill cost.
+async function primeSmsCache(phone, member) {
+  try {
+    const systemPrompt = await buildSmsSystemPrompt(phone, member);
+    const t0 = Date.now();
+    await callClaudeChat(systemPrompt, [{ role: 'user', content: '.' }], 1);
+    console.log(`[sms-inbound] Cache primed for ${phone} in ${Date.now() - t0}ms`);
+  } catch (err) {
+    console.error('[sms-inbound] Cache prime failed:', err.message);
+  }
+}
+
 // ── Pool of open-ended greeting openers for varied, natural first lines ─────
 const OPENERS = [
   "how's it going?",
@@ -390,11 +442,16 @@ router.post('/salesmessage/inbound', async (req, res) => {
     const member = await db.getMember(phone);
 
     // 2a. On the first inbound of a new session, fire an instant greeting
-    //     (no Claude call, no context injection — that happens on turn 2+).
-    //     Voice does the equivalent via the convai-init webhook.
+    //     (no Claude call) AND fire a cache-priming Claude call in parallel.
+    //     The prime runs in the background while the member is typing their
+    //     next message, so turn 2 lands on a warm cache.
     if (isNewSession && msg.conversation_id) {
       const firstNameQuick = (member?.name || '').trim().split(' ')[0] || 'brother';
       const greeting = composeQuickGreeting(member, firstNameQuick);
+
+      // Fire cache prime in background — does NOT block greeting.
+      primeSmsCache(phone, member);
+
       try {
         const sresp = await sendMessageToConversation(msg.conversation_id, greeting);
         const sid = sresp?.body?.data?.id ?? sresp?.body?.id ?? null;
@@ -415,38 +472,10 @@ router.post('/salesmessage/inbound', async (req, res) => {
       console.log(`[sms-inbound] No member record for ${phone} — replying without memory context`);
     }
 
-    const [story, mergedTimeline, smsHistory] = await Promise.all([
-      member ? db.getStory(phone) : Promise.resolve(null),
-      member ? db.getMergedMemoryTimeline(phone, 5) : Promise.resolve([]),
+    const [renderedSystem, smsHistory] = await Promise.all([
+      buildSmsSystemPrompt(phone, member),
       db.getRecentSmsMessages(phone, 20),
     ]);
-
-    const firstName = (member?.name || '').split(' ')[0] || 'brother';
-    const callerStatus = !member
-      ? 'unknown'
-      : (member.calls || 0) === 0
-        ? 'first_call'
-        : 'returning';
-
-    const recentCallsText = mergedTimeline
-      .map(e => {
-        const label = e.type === 'sms' ? `SMS (${e.date})` : `Call (${e.date})`;
-        return `- ${label}: ${e.summary}`;
-      })
-      .join('\n') || 'No prior calls or sessions.';
-
-    const renderedSystem = renderPrompt(SMS_PROMPT_TEMPLATE, {
-      member_name:       member?.name?.trim() || firstName,
-      member_first_name: firstName,
-      days_sober:        member?.daysSober ?? 0,
-      total_calls:       member?.calls ?? 0,
-      tier:              member?.tier || 'foundation',
-      caller_status:     callerStatus,
-      member_story:      story || (member
-        ? 'No story yet — this is an early contact.'
-        : 'Unknown number. No prior context.'),
-      recent_calls:      recentCallsText,
-    });
 
     // 3. Build role-alternating history from SMS messages (include just-saved inbound).
     const turns = smsHistory.map(m => ({
