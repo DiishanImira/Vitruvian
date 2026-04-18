@@ -13,6 +13,11 @@
  *     2. Generate summary → save to call_summaries
  *     3. Rewrite member story
  *     4. Update member profile
+ *
+ * POST /webhooks/salesmessage/inbound — SalesMessage fires this for every
+ *   inbound SMS. Currently in DIAGNOSTIC mode: logs raw headers + body,
+ *   returns 200. Used to capture the payload shape before wiring the
+ *   real SMS conversation handler.
  */
 
 const express = require('express');
@@ -294,6 +299,21 @@ async function processConversationEnd({
 router.post('/call-status', (req, res) => {
   const { CallSid, CallStatus, To, Duration } = req.body;
   console.log(`[webhook/call-status] ${CallSid}: ${CallStatus} → ${To} (${Duration || 0}s)`);
+  res.sendStatus(200);
+});
+
+// ── SalesMessage inbound (DIAGNOSTIC — logs payload shape only) ─────────────
+
+router.post('/salesmessage/inbound', (req, res) => {
+  const headers = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (k.toLowerCase().startsWith('authorization') || k.toLowerCase().startsWith('cookie')) continue;
+    headers[k] = v;
+  }
+  console.log('[webhook/salesmessage] ── INBOUND ──────────────────────────────');
+  console.log('[webhook/salesmessage] headers:', JSON.stringify(headers, null, 2));
+  console.log('[webhook/salesmessage] body:', JSON.stringify(req.body, null, 2));
+  console.log('[webhook/salesmessage] ─────────────────────────────────────────');
   res.sendStatus(200);
 });
 
