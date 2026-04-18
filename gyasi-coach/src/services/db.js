@@ -95,12 +95,42 @@ async function initDb() {
       )
     `);
 
+    // SMS messages — no FK to members(phone): SMS can arrive from unknown numbers.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sms_messages (
+        id                  SERIAL       PRIMARY KEY,
+        phone               VARCHAR(20)  NOT NULL,
+        direction           VARCHAR(10)  NOT NULL,
+        status              VARCHAR(20)  DEFAULT 'received',
+        body                TEXT         NOT NULL,
+        sm_message_id       VARCHAR(64)  UNIQUE,
+        sm_conversation_id  VARCHAR(64),
+        session_id          INTEGER,
+        created_at          TIMESTAMP    DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sms_sessions (
+        id             SERIAL      PRIMARY KEY,
+        phone          VARCHAR(20) NOT NULL,
+        started_at     TIMESTAMP   NOT NULL,
+        ended_at       TIMESTAMP   NOT NULL,
+        message_count  INTEGER     NOT NULL,
+        summary        TEXT,
+        created_at     TIMESTAMP   DEFAULT NOW()
+      )
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_call_transcripts_phone ON call_transcripts(phone);
       CREATE INDEX IF NOT EXISTS idx_call_transcripts_date  ON call_transcripts(phone, call_date DESC);
       CREATE INDEX IF NOT EXISTS idx_call_summaries_phone   ON call_summaries(phone);
       CREATE INDEX IF NOT EXISTS idx_call_summaries_date    ON call_summaries(phone, call_date DESC);
       CREATE INDEX IF NOT EXISTS idx_call_notes_phone_time  ON call_notes(phone, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sms_messages_phone_time ON sms_messages(phone, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sms_messages_unrolled   ON sms_messages(phone, created_at) WHERE session_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_sms_sessions_phone_time ON sms_sessions(phone, ended_at DESC);
     `);
 
     console.log('[db] Schema ready');
@@ -278,6 +308,8 @@ async function deleteMember(phone) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('DELETE FROM sms_messages    WHERE phone = $1', [phone]);
+    await client.query('DELETE FROM sms_sessions    WHERE phone = $1', [phone]);
     await client.query('DELETE FROM call_summaries  WHERE phone = $1', [phone]);
     await client.query('DELETE FROM call_transcripts WHERE phone = $1', [phone]);
     await client.query('DELETE FROM member_stories  WHERE phone = $1', [phone]);
@@ -485,6 +517,138 @@ async function getFullContext(phone) {
   };
 }
 
+// ─── SMS Messages / Sessions ─────────────────────────────────────────────
+
+async function saveSmsMessage(phone, { direction, body, status, sm_message_id, sm_conversation_id }) {
+  const { rows } = await pool.query(
+    `INSERT INTO sms_messages (phone, direction, status, body, sm_message_id, sm_conversation_id)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (sm_message_id) DO NOTHING
+     RETURNING id, created_at`,
+    [
+      phone,
+      direction,
+      status || (direction === 'in' ? 'received' : 'draft'),
+      body,
+      sm_message_id || null,
+      sm_conversation_id || null,
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function getRecentSmsMessages(phone, limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT id, direction, status, body, created_at
+     FROM sms_messages
+     WHERE phone = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [phone, limit]
+  );
+  return rows.reverse().map(r => ({
+    id: r.id,
+    direction: r.direction,
+    status: r.status,
+    body: r.body,
+    created_at: r.created_at,
+  }));
+}
+
+async function findPhonesWithStaleUnrolledSms(gapMinutes = 20) {
+  const { rows } = await pool.query(
+    `SELECT phone, MIN(created_at) AS first_at, MAX(created_at) AS last_at, COUNT(*) AS n
+     FROM sms_messages
+     WHERE session_id IS NULL
+     GROUP BY phone
+     HAVING MAX(created_at) < NOW() - ($1::int * INTERVAL '1 minute')`,
+    [gapMinutes]
+  );
+  return rows.map(r => ({
+    phone: r.phone,
+    first_at: r.first_at,
+    last_at: r.last_at,
+    count: parseInt(r.n, 10),
+  }));
+}
+
+async function getUnrolledSmsMessages(phone) {
+  const { rows } = await pool.query(
+    `SELECT id, direction, status, body, created_at
+     FROM sms_messages
+     WHERE phone = $1 AND session_id IS NULL
+     ORDER BY created_at ASC`,
+    [phone]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    direction: r.direction,
+    status: r.status,
+    body: r.body,
+    created_at: r.created_at,
+  }));
+}
+
+async function createSmsSession(phone, { started_at, ended_at, messageIds, summary }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO sms_sessions (phone, started_at, ended_at, message_count, summary)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+      [phone, started_at, ended_at, messageIds.length, summary || null]
+    );
+    const sessionId = rows[0].id;
+    if (messageIds.length > 0) {
+      await client.query(
+        `UPDATE sms_messages SET session_id = $1 WHERE id = ANY($2::int[])`,
+        [sessionId, messageIds]
+      );
+    }
+    await client.query('COMMIT');
+    return { id: sessionId, created_at: rows[0].created_at };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function getRecentSmsSessions(phone, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT id, started_at, ended_at, message_count, summary, created_at
+     FROM sms_sessions
+     WHERE phone = $1
+     ORDER BY ended_at DESC
+     LIMIT $2`,
+    [phone, limit]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    started_at: r.started_at,
+    ended_at: r.ended_at,
+    message_count: r.message_count,
+    summary: r.summary,
+    created_at: r.created_at,
+    date: r.ended_at ? new Date(r.ended_at).toISOString().slice(0, 10) : null,
+  }));
+}
+
+// Merged timeline — voice summaries + SMS session summaries, newest first.
+async function getMergedMemoryTimeline(phone, limit = 5) {
+  const [voice, sms] = await Promise.all([
+    getRecentCalls(phone, limit),
+    getRecentSmsSessions(phone, limit),
+  ]);
+  const merged = [
+    ...voice.map(c => ({ type: 'voice', date: c.date, summary: c.summary, sortKey: c.date })),
+    ...sms.map(s => ({ type: 'sms', date: s.date, summary: s.summary, sortKey: s.ended_at })),
+  ].filter(e => e.summary);
+  merged.sort((a, b) => new Date(b.sortKey) - new Date(a.sortKey));
+  return merged.slice(0, limit);
+}
+
 module.exports = {
   initDb,
   getMember,
@@ -505,4 +669,11 @@ module.exports = {
   listAllNotes,
   callAlreadyProcessed,
   getFullContext,
+  saveSmsMessage,
+  getRecentSmsMessages,
+  findPhonesWithStaleUnrolledSms,
+  getUnrolledSmsMessages,
+  createSmsSession,
+  getRecentSmsSessions,
+  getMergedMemoryTimeline,
 };

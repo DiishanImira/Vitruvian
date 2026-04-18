@@ -143,6 +143,38 @@ router.get('/logs', (req, res) => {
   res.json({ count: lines.length, logs: lines });
 });
 
+// ── GET /admin/member/:phone/sms ──────────────────────────────────────────
+
+router.get('/member/:phone/sms', async (req, res) => {
+  const phone = normalizePhone(req.params.phone);
+  const rawLimit = parseInt(req.query.limit, 10);
+  const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
+  try {
+    const [messages, sessions] = await Promise.all([
+      db.getRecentSmsMessages(phone, limit),
+      db.getRecentSmsSessions(phone, 10),
+    ]);
+    res.json({ phone, messages, sessions });
+  } catch (err) {
+    console.error('[admin] GET /member/sms error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /admin/sms/rollup — manually trigger SMS session rollup ──────────
+
+router.post('/sms/rollup', async (req, res) => {
+  try {
+    const { rollupStaleSessions } = require('../services/sms-rollup');
+    const gapMinutes = parseInt(req.query.gapMinutes, 10) || undefined;
+    const result = await rollupStaleSessions(gapMinutes);
+    res.json(result);
+  } catch (err) {
+    console.error('[admin] POST /sms/rollup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── DELETE /admin/member/:phone ───────────────────────────────────────────
 
 router.delete('/member/:phone', async (req, res) => {

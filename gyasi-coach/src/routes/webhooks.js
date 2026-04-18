@@ -23,7 +23,27 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/db');
-const { summarizeTranscript, rewriteStory } = require('../services/story-writer');
+const { summarizeTranscript, rewriteStory, callClaudeChat } = require('../services/story-writer');
+const fs = require('fs');
+const path = require('path');
+
+const SMS_PROMPT_TEMPLATE = fs.readFileSync(
+  path.join(__dirname, '..', 'prompts', 'gyasi-sms.md'),
+  'utf-8'
+);
+
+function renderPrompt(template, vars) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) =>
+    vars[key] === undefined || vars[key] === null ? '' : String(vars[key])
+  );
+}
+
+function normalizePhone(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (s.startsWith('+')) return s;
+  return '+' + s.replace(/[^0-9]/g, '');
+}
 
 // ── Pool of open-ended greeting openers for varied, natural first lines ─────
 const OPENERS = [
@@ -302,19 +322,117 @@ router.post('/call-status', (req, res) => {
   res.sendStatus(200);
 });
 
-// ── SalesMessage inbound (DIAGNOSTIC — logs payload shape only) ─────────────
+// ── SalesMessage inbound (real handler — log-only reply for now) ────────────
+//
+// Payload envelope confirmed from diagnostic run (2026-04-18):
+//   { event: "message.received", data: { message: {...}, contact: {...} } }
 
-router.post('/salesmessage/inbound', (req, res) => {
-  const headers = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (k.toLowerCase().startsWith('authorization') || k.toLowerCase().startsWith('cookie')) continue;
-    headers[k] = v;
-  }
-  console.log('[webhook/salesmessage] ── INBOUND ──────────────────────────────');
-  console.log('[webhook/salesmessage] headers:', JSON.stringify(headers, null, 2));
-  console.log('[webhook/salesmessage] body:', JSON.stringify(req.body, null, 2));
-  console.log('[webhook/salesmessage] ─────────────────────────────────────────');
+router.post('/salesmessage/inbound', async (req, res) => {
+  // Always ack quickly — SalesMessage retries on non-2xx.
   res.sendStatus(200);
+
+  try {
+    const { event, data } = req.body || {};
+    if (event !== 'message.received') {
+      console.log(`[sms-inbound] Ignoring event: ${event}`);
+      return;
+    }
+
+    const msg = data?.message;
+    const contact = data?.contact;
+    if (!msg || !contact) {
+      console.warn('[sms-inbound] Missing message/contact in payload');
+      return;
+    }
+
+    const phone = normalizePhone(contact.number);
+    const body  = (msg.body || '').trim();
+    if (!phone || !body) {
+      console.warn('[sms-inbound] Missing phone or body — skipping');
+      return;
+    }
+
+    // 1. Persist inbound
+    await db.saveSmsMessage(phone, {
+      direction: 'in',
+      body,
+      status: 'received',
+      sm_message_id: msg.id ? String(msg.id) : null,
+      sm_conversation_id: msg.conversation_id ? String(msg.conversation_id) : null,
+    });
+    console.log(`[sms-inbound] Saved inbound from ${phone}: "${body.slice(0, 80)}"`);
+
+    // 2. Load member context. Unknown phones get handled with minimal context.
+    const member = await db.getMember(phone);
+    if (!member) {
+      console.log(`[sms-inbound] No member record for ${phone} — replying without memory context`);
+    }
+
+    const [story, mergedTimeline, smsHistory] = await Promise.all([
+      member ? db.getStory(phone) : Promise.resolve(null),
+      member ? db.getMergedMemoryTimeline(phone, 5) : Promise.resolve([]),
+      db.getRecentSmsMessages(phone, 20),
+    ]);
+
+    const firstName = (member?.name || '').split(' ')[0] || 'brother';
+    const callerStatus = !member
+      ? 'unknown'
+      : (member.calls || 0) === 0
+        ? 'first_call'
+        : 'returning';
+
+    const recentCallsText = mergedTimeline
+      .map(e => {
+        const label = e.type === 'sms' ? `SMS (${e.date})` : `Call (${e.date})`;
+        return `- ${label}: ${e.summary}`;
+      })
+      .join('\n') || 'No prior calls or sessions.';
+
+    const renderedSystem = renderPrompt(SMS_PROMPT_TEMPLATE, {
+      member_name:       member?.name?.trim() || firstName,
+      member_first_name: firstName,
+      days_sober:        member?.daysSober ?? 0,
+      total_calls:       member?.calls ?? 0,
+      tier:              member?.tier || 'foundation',
+      caller_status:     callerStatus,
+      member_story:      story || (member
+        ? 'No story yet — this is an early contact.'
+        : 'Unknown number. No prior context.'),
+      recent_calls:      recentCallsText,
+    });
+
+    // 3. Build role-alternating history from SMS messages (include just-saved inbound).
+    const turns = smsHistory.map(m => ({
+      role: m.direction === 'in' ? 'user' : 'assistant',
+      content: m.body,
+    }));
+    // Ensure the latest inbound is the final user turn (saveSmsMessage already persisted it).
+    if (turns.length === 0 || turns[turns.length - 1].role !== 'user') {
+      turns.push({ role: 'user', content: body });
+    }
+    // Claude requires conversation to start with user; drop any leading assistant turns.
+    while (turns.length && turns[0].role !== 'user') turns.shift();
+
+    // 4. Generate reply
+    let draft;
+    try {
+      draft = await callClaudeChat(renderedSystem, turns, 600);
+    } catch (err) {
+      console.error('[sms-inbound] Claude call failed:', err.message);
+      return;
+    }
+
+    // 5. Persist draft (log-only mode — not sent to SalesMessage yet)
+    await db.saveSmsMessage(phone, {
+      direction: 'out',
+      body: draft,
+      status: 'draft',
+      sm_conversation_id: msg.conversation_id ? String(msg.conversation_id) : null,
+    });
+    console.log(`[sms-inbound] Draft reply for ${phone} (${draft.length} chars, log-only): ${draft}`);
+  } catch (err) {
+    console.error('[sms-inbound] Handler error:', err.message, err.stack);
+  }
 });
 
 module.exports = router;

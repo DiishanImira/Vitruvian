@@ -181,13 +181,14 @@ async function generateInitialStory(member, intake) {
 // Kept for backward compatibility. New code should use rewriteStoryAfterCall().
 
 async function rewriteStory(member, previousStory, callSummaries, midCallNotes) {
-  // callSummaries arrives DESC (newest first). Label each with its actual
-  // call number so the rewriter doesn't re-index 4→1 when only 3 summaries
-  // are passed. totalCalls must reflect the *just-saved* call.
+  // callSummaries arrives DESC (newest first). Each entry may carry an explicit
+  // `label` (e.g. "SMS Session (2026-04-18)") when mixing voice + SMS into one
+  // timeline; otherwise fall back to "Call N (date)" using the saved call count.
   const totalCalls = member.calls || callSummaries.length;
-  const callSummaryText = callSummaries.map((c, i) =>
-    `Call ${totalCalls - i} (${c.date}): ${c.summary}`
-  ).join('\n\n');
+  const callSummaryText = callSummaries.map((c, i) => {
+    const label = c.label || `Call ${totalCalls - i} (${c.date})`;
+    return `${label}: ${c.summary}`;
+  }).join('\n\n');
 
   const notesText = midCallNotes.length > 0
     ? `\nMid-call notes from latest call:\n${midCallNotes.map(n => `- ${n.note}`).join('\n')}`
@@ -262,6 +263,112 @@ Be specific. Use the member's actual words where possible. This is the primary i
   return callClaude(systemPrompt, userMessage, 8000);
 }
 
+// ─── SMS Session Summary ──────────────────────────────────────────────────
+
+async function summarizeSmsSession(messages, memberName, sessionDate, priorSummaries) {
+  const dateLabel = sessionDate || new Date().toISOString().slice(0, 10);
+
+  const exchange = messages.map(m => {
+    const speaker = m.direction === 'in' ? memberName : 'Gyasi';
+    return `${speaker}: ${m.body}`;
+  }).join('\n');
+
+  const priorBlock = Array.isArray(priorSummaries) && priorSummaries.length
+    ? priorSummaries
+        .filter(c => c && c.summary)
+        .map(c => `--- ${c.label || c.date} ---\n${c.summary}`)
+        .join('\n\n')
+    : '';
+
+  const systemPrompt = `You are analyzing an SMS coaching exchange from the Vitruvian Man program. The coach is Gyasi.
+
+Produce a structured session summary. This will be stored as memory for the member's narrative story, alongside voice call summaries.
+
+You have access to this member's PRIOR CALL AND SESSION SUMMARIES below (most recent last). Use them to ground "Connections Made" and "Themes That Came Up" — flag themes as RECURRING when they appeared before, NEW when they didn't. Do not treat this as a first contact unless the prior-summaries block is empty.
+
+FORMAT:
+---
+## SMS Session Summary — ${dateLabel}
+
+### What Happened
+[2-3 sentences: arc of the exchange, where it went]
+
+### Themes That Came Up
+- **[Theme]** — [new/recurring] — [1 sentence]
+
+### Meaningful Moments
+[1-3 verbatim or near-verbatim quotes that carry weight]
+- "[quote]" — [why this matters]
+
+### What Changed
+[What shifted for the member during the exchange? Progress, regression, new awareness, new commitment?]
+
+### Connections Made
+[Explicit connections to prior calls or sessions. If nothing, say "No prior connections identified."]
+
+### Open Questions
+- **[Topic]** — [what was hinted at or left unresolved] — [why it might matter] — [when/how to approach]
+
+### For the Story Rewrite
+[2-3 sentences: what the story rewriter needs to know from this session]
+---
+
+Keep the summary tight and grounded. SMS exchanges are usually shorter than calls — don't inflate.`;
+
+  const userMessage = priorBlock
+    ? `Member: ${memberName}\n\nPRIOR SUMMARIES:\n${priorBlock}\n\nSMS EXCHANGE:\n${exchange}`
+    : `Member: ${memberName}\n\nPRIOR SUMMARIES: (none — this is an early contact)\n\nSMS EXCHANGE:\n${exchange}`;
+
+  return callClaude(systemPrompt, userMessage, 4000);
+}
+
+// ─── Claude conversation for SMS reply generation ─────────────────────────
+// Takes a fully-rendered system prompt + an array of role-alternating messages.
+
+function callClaudeChat(systemPrompt, messages, maxTokens = 600) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+    });
+
+    const options = {
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.content && parsed.content[0]) {
+            resolve(parsed.content[0].text);
+          } else {
+            reject(new Error(`Claude error: ${data}`));
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 module.exports = {
   // Primary exports (new API)
   generateIntakeStory,
@@ -270,4 +377,7 @@ module.exports = {
   generateInitialStory,
   rewriteStory,
   summarizeTranscript,
+  // SMS
+  summarizeSmsSession,
+  callClaudeChat,
 };

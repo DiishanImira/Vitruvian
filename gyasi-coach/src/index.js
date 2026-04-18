@@ -99,8 +99,11 @@ app.use((err, req, res, _next) => {
 const PORT = process.env.PORT || 5000;
 const db   = require('./services/db');
 
+const { startRollupWorker } = require('./services/sms-rollup');
+
 db.initDb()
   .then(() => {
+    startRollupWorker();
     app.listen(PORT, '0.0.0.0', () => {
       console.log('');
       console.log('  ╔══════════════════════════════════════╗');
