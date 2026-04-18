@@ -330,7 +330,12 @@ function callClaudeChat(systemPrompt, messages, maxTokens = 600) {
     const payload = JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: maxTokens,
-      system: systemPrompt,
+      // System as an array with cache_control lets Anthropic cache this block
+      // across turns in the same SMS thread (5-min TTL by default). Turn 1
+      // pays full cost; turns 2+ read the cached system ~5-10x faster.
+      system: [
+        { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+      ],
       messages,
     });
 

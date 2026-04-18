@@ -46,6 +46,20 @@ function normalizePhone(raw) {
   return '+' + s.replace(/[^0-9]/g, '');
 }
 
+// Fast template-based greeting for the first inbound of a new SMS session.
+// No Claude call — pure name substitution so the member sees activity in ~1s
+// while full context loads on turn 2.
+function composeQuickGreeting(member, firstName) {
+  if (!member) {
+    return "Hey — this is Jyasi. Who am I talking to?";
+  }
+  if ((member.calls || 0) === 0) {
+    return `Hey ${firstName}, Jyasi here — glad you reached out.`;
+  }
+  const opener = OPENERS[Math.floor(Math.random() * OPENERS.length)];
+  return `Hey ${firstName}, ${opener}`;
+}
+
 // ── Pool of open-ended greeting openers for varied, natural first lines ─────
 const OPENERS = [
   "how's it going?",
@@ -353,6 +367,15 @@ router.post('/salesmessage/inbound', async (req, res) => {
       return;
     }
 
+    // Check whether this is the first inbound of a new SMS session BEFORE
+    // persisting the new row. "New session" = no prior SMS from this phone
+    // in the last SMS_SESSION_GAP_MINUTES.
+    const SESSION_GAP_MIN = parseInt(process.env.SMS_SESSION_GAP_MINUTES || '20', 10);
+    const priorBeforeSave = await db.getRecentSmsMessages(phone, 1);
+    const isNewSession = priorBeforeSave.length === 0
+      || (Date.now() - new Date(priorBeforeSave[priorBeforeSave.length - 1].created_at).getTime())
+         > SESSION_GAP_MIN * 60 * 1000;
+
     // 1. Persist inbound
     await db.saveSmsMessage(phone, {
       direction: 'in',
@@ -361,10 +384,33 @@ router.post('/salesmessage/inbound', async (req, res) => {
       sm_message_id: msg.id ? String(msg.id) : null,
       sm_conversation_id: msg.conversation_id ? String(msg.conversation_id) : null,
     });
-    console.log(`[sms-inbound] Saved inbound from ${phone}: "${body.slice(0, 80)}"`);
+    console.log(`[sms-inbound] Saved inbound from ${phone}: "${body.slice(0, 80)}" (newSession=${isNewSession})`);
 
     // 2. Load member context. Unknown phones get handled with minimal context.
     const member = await db.getMember(phone);
+
+    // 2a. On the first inbound of a new session, fire an instant greeting
+    //     (no Claude call, no context injection — that happens on turn 2+).
+    //     Voice does the equivalent via the convai-init webhook.
+    if (isNewSession && msg.conversation_id) {
+      const firstNameQuick = (member?.name || '').trim().split(' ')[0] || 'brother';
+      const greeting = composeQuickGreeting(member, firstNameQuick);
+      try {
+        const sresp = await sendMessageToConversation(msg.conversation_id, greeting);
+        const sid = sresp?.body?.data?.id ?? sresp?.body?.id ?? null;
+        await db.saveSmsMessage(phone, {
+          direction: 'out',
+          body: greeting,
+          status: 'sent',
+          sm_message_id: sid ? String(sid) : null,
+          sm_conversation_id: String(msg.conversation_id),
+        });
+        console.log(`[sms-inbound] Instant greeting sent to ${phone}: "${greeting}"`);
+      } catch (err) {
+        console.error('[sms-inbound] Instant greeting send failed:', err.message);
+      }
+      return;
+    }
     if (!member) {
       console.log(`[sms-inbound] No member record for ${phone} — replying without memory context`);
     }
